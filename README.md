@@ -23,8 +23,8 @@ A market-making application for the Hyperliquid decentralized exchange, built wi
 1. Clone the repository:
 
    ```
-   git clone https://github.com/yourusername/hyperliquid-market-maker.git
-   cd hyperliquid-market-maker
+   git clone https://github.com/kylebolton/HyperliquidMarketMaker.git
+   cd HyperliquidMarketMaker
    ```
 
 2. Install dependencies:
