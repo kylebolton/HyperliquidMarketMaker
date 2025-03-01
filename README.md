@@ -1,36 +1,90 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Hyperliquid Market Maker
+
+A market-making application for the Hyperliquid decentralized exchange, built with Next.js and TypeScript.
+
+## Features
+
+- **Automated Market Making**: Place and manage buy and sell orders around the mid-price with configurable spreads.
+- **Technical Analysis**: Utilizes candlestick patterns and indicators (RSI, Bollinger Bands, MACD, SMAs) to make informed trading decisions.
+- **Real-time Data**: WebSocket connections for live market data updates.
+- **Risk Management**: Configurable risk parameters to control exposure.
+- **User-friendly Interface**: Easy-to-use dashboard to monitor and control the market maker.
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+- Node.js 18+ and npm
+- A Hyperliquid account with API credentials
+- An on-chain wallet address
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Installation
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Clone the repository:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+   ```
+   git clone https://github.com/yourusername/hyperliquid-market-maker.git
+   cd hyperliquid-market-maker
+   ```
 
-## Learn More
+2. Install dependencies:
 
-To learn more about Next.js, take a look at the following resources:
+   ```
+   npm install
+   ```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+3. Run the development server:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+   ```
+   npm run dev
+   ```
 
-## Deploy on Vercel
+4. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Configuration
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The market maker can be configured through the UI with the following parameters:
+
+- **API Key**: Your Hyperliquid API key
+- **API Secret**: Your Hyperliquid API secret
+- **Wallet Address**: Your on-chain wallet address
+- **Trading Pairs**: Comma-separated list of assets to trade (e.g., "BTC, ETH")
+- **Trading Amount**: Base amount in USD for each order
+- **Leverage**: Trading leverage (1x recommended for beginners)
+- **Min/Max Spread**: Minimum and maximum spread percentages
+- **Update Interval**: How often to update orders (in seconds)
+- **Risk Percentage**: Percentage of account balance to risk per trade
+- **Candle Interval**: Timeframe for technical analysis
+
+## How It Works
+
+1. **Market Analysis**: The application fetches market data and performs technical analysis to determine optimal trading parameters.
+2. **Dynamic Spreads**: Spreads are adjusted based on market volatility and technical indicators.
+3. **Order Placement**: Buy and sell orders are placed around the mid-price with the calculated spread.
+4. **Order Management**: Existing orders are regularly canceled and replaced to adapt to changing market conditions.
+
+## Technical Architecture
+
+- **Next.js Frontend**: React-based UI for configuration and monitoring
+- **TypeScript**: Type-safe code for reliability
+- **Hyperliquid SDK**: Integration with the Hyperliquid exchange API
+- **Trading Signals**: Library for technical analysis calculations
+- **WebSockets**: Real-time data updates
+
+## Security Considerations
+
+- API keys and secrets are stored locally and never sent to any server
+- All trading operations happen directly between your browser and Hyperliquid
+- Consider using a dedicated wallet with limited funds for market making
+
+## Disclaimer
+
+This software is provided for educational and informational purposes only. Trading cryptocurrency involves significant risk. Use this software at your own risk. The authors are not responsible for any financial losses incurred while using this application.
+
+## License
+
+MIT
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
