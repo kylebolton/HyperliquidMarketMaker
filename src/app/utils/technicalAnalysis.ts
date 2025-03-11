@@ -371,6 +371,9 @@ export function generateSignals(
   signal: "buy" | "sell" | "neutral";
   confidence: number; // 0-100
   reasons: string[];
+  level: number;
+  levelMultiplier: number;
+  skew: number;
 } {
   const reasons: string[] = [];
   let buySignals = 0;
@@ -545,7 +548,23 @@ export function generateSignals(
     signal = "sell";
   }
 
-  return { signal, confidence, reasons };
+  // Calculate skew based on signal strength
+  // Skew ranges from -1 to 1, where:
+  // -1 = 100% sell bias
+  // 0 = neutral
+  // 1 = 100% buy bias
+  let skew = 0;
+  if (signal === "buy") {
+    skew = confidence / 100;
+  } else if (signal === "sell") {
+    skew = -confidence / 100;
+  }
+
+  // Set level and level multiplier
+  const level = 1; // Default to level 1
+  const levelMultiplier = 1.0; // Default multiplier
+
+  return { signal, confidence, reasons, level, levelMultiplier, skew };
 }
 
 // Analyze volume profile to identify high-volume price levels

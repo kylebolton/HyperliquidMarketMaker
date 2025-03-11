@@ -15,6 +15,15 @@ export interface Config {
   volumeBasedPricing: boolean; // Whether to use volume-based pricing
   aggressiveness: number; // How aggressive to be with order placement (0-10)
   orderRefreshRate: number; // How often to refresh orders in milliseconds
+  // New configuration options for enhanced trading
+  enableAutomaticPricing: boolean; // Whether to use automatic price determination
+  enableAutomaticSizing: boolean; // Whether to use automatic size determination
+  useMarketIndicators: boolean; // Whether to use market indicators for trading decisions
+  rsiPeriod: number; // Period for RSI calculation
+  emaPeriods: { short: number; medium: number; long: number }; // Periods for EMA calculations
+  volatilityWindow: number; // Window for volatility calculation
+  maxPositionSize: number; // Maximum position size as percentage of account balance
+  simultaneousPairs: boolean; // Whether to trade multiple pairs simultaneously
 }
 
 // Default configuration
@@ -35,4 +44,13 @@ export const defaultConfig: Config = {
   volumeBasedPricing: true, // Use volume-based pricing
   aggressiveness: 7, // Fairly aggressive (0-10 scale)
   orderRefreshRate: 500, // Refresh orders every 500ms
+  // New configuration options with default values
+  enableAutomaticPricing: true, // Enable automatic price determination
+  enableAutomaticSizing: true, // Enable automatic size determination
+  useMarketIndicators: true, // Use market indicators for trading decisions
+  rsiPeriod: 14, // 14-period RSI
+  emaPeriods: { short: 9, medium: 21, long: 50 }, // EMA periods
+  volatilityWindow: 20, // 20-period volatility window
+  maxPositionSize: 10, // Maximum position size as 10% of account balance
+  simultaneousPairs: true, // Enable trading multiple pairs simultaneously
 };

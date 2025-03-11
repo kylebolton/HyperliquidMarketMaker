@@ -1,11 +1,32 @@
-import { HyperliquidService } from "./hyperliquidService";
+import { HyperliquidService } from "./hyperliquid/compatibility";
 import {
   analyzeCandles,
   detectCandlestickPatterns,
   generateSignals,
   analyzeVolumeProfile,
 } from "../utils/technicalAnalysis";
+import {
+  analyzeMarketConditions,
+  determineOptimalPriceLevels,
+  determineOptimalOrderSizes,
+  MarketCondition,
+} from "../utils/marketAnalysis";
 import { Config } from "../config";
+import EventEmitter from "events";
+
+// Define the strategy configuration interface
+export interface MarketMakerConfig {
+  coins: string[];
+  spreadPercentage: number;
+  orderSizeUsd: number;
+  maxOrdersPerSide: number;
+  priceDeviationThreshold: number;
+  updateIntervalMs: number;
+  enableMomentumStrategy: boolean;
+  momentumLookbackPeriods: number;
+  momentumThreshold: number;
+  riskPercentage: number;
+}
 
 export class MarketMakerStrategy {
   private hyperliquidService: HyperliquidService;
@@ -21,10 +42,39 @@ export class MarketMakerStrategy {
   private cachedVolumeProfile: Map<string, any> = new Map();
   private orderIds: Map<string, string[]> = new Map();
   private lastOrderUpdate: Map<string, number> = new Map();
+  private eventEmitter: EventEmitter = new EventEmitter();
+  // Add new properties for enhanced market analysis
+  private marketConditions: Map<string, MarketCondition> = new Map();
+  private emaHistory: Map<
+    string,
+    { short: number[]; medium: number[]; long: number[] }
+  > = new Map();
+  private rsiHistory: Map<string, number[]> = new Map();
+  private volatilityMetrics: Map<string, number> = new Map();
 
   constructor(hyperliquidService: HyperliquidService, config: Config) {
     this.hyperliquidService = hyperliquidService;
     this.config = config;
+  }
+
+  // Add event listener methods
+  public on(event: string, listener: (...args: any[]) => void): void {
+    this.eventEmitter.on(event, listener);
+  }
+
+  public off(event: string, listener: (...args: any[]) => void): void {
+    this.eventEmitter.off(event, listener);
+  }
+
+  // Helper method to safely emit errors
+  private emitError(errorMessage: string | any): void {
+    // Ensure errorMessage is a string
+    const errorStr =
+      typeof errorMessage === "string"
+        ? errorMessage
+        : errorMessage?.message || String(errorMessage) || "Unknown error";
+
+    this.eventEmitter.emit("error", errorStr);
   }
 
   // Start the market maker strategy
@@ -74,22 +124,31 @@ export class MarketMakerStrategy {
       // Initial update of orders
       await this.updateOrders();
 
-      // Set up interval for regular market analysis (less frequent)
+      // Set up interval for regular market analysis
+      const marketAnalysisInterval = this.config.updateInterval * 10;
+      console.log(
+        `Setting market analysis interval to ${marketAnalysisInterval}ms`
+      );
       this.updateIntervalId = setInterval(
         () => this.performMarketAnalysis(),
-        this.config.updateInterval * 10
+        marketAnalysisInterval
       );
 
-      // Set up interval for high-frequency order updates
+      // Set up interval for order updates
+      const orderRefreshInterval = this.config.orderRefreshRate;
+      console.log(
+        `Setting order refresh interval to ${orderRefreshInterval}ms`
+      );
       this.orderRefreshIntervalId = setInterval(
         () => this.updateOrders(),
-        this.config.orderRefreshRate
+        orderRefreshInterval
       );
 
       console.log("Market maker strategy started successfully");
     } catch (error) {
       console.error("Error starting market maker strategy:", error);
       this.isRunning = false;
+      this.emitError(`Error starting market maker strategy: ${error}`);
       throw error;
     }
   }
@@ -135,11 +194,12 @@ export class MarketMakerStrategy {
       console.log("Market maker strategy stopped successfully");
     } catch (error) {
       console.error("Error stopping market maker strategy:", error);
+      this.emitError(`Error stopping market maker strategy: ${error}`);
       throw error;
     }
   }
 
-  // Perform market analysis (less frequent than order updates)
+  // Perform market analysis
   private async performMarketAnalysis(): Promise<void> {
     try {
       const startTime = Date.now();
@@ -150,40 +210,128 @@ export class MarketMakerStrategy {
         availableCoins.includes(pair)
       );
 
-      for (const coin of validTradingPairs) {
-        // Get candles for technical analysis
-        const candles = await this.hyperliquidService.getCandles(coin, 100);
-
-        if (candles.length === 0) {
-          console.log(`No candle data for ${coin}, skipping analysis`);
-          continue;
-        }
-
-        // Perform technical analysis
-        const analysis = analyzeCandles(candles);
-        const patterns = detectCandlestickPatterns(candles);
-        const volumeProfile = analyzeVolumeProfile(
-          candles,
-          this.config.orderLevels * 2
+      // Process all trading pairs in parallel if enabled
+      if (this.config.simultaneousPairs) {
+        await Promise.all(
+          validTradingPairs.map(coin => this.analyzeCoin(coin))
         );
-
-        // Cache the results
-        this.cachedAnalysis.set(coin, analysis);
-        this.cachedPatterns.set(coin, patterns);
-        this.cachedVolumeProfile.set(coin, volumeProfile);
-        this.lastAnalysisTime.set(coin, Date.now());
-
-        console.log(`Market analysis completed for ${coin}`);
+      } else {
+        // Process sequentially if simultaneous processing is disabled
+        for (const coin of validTradingPairs) {
+          await this.analyzeCoin(coin);
+        }
       }
 
       const executionTime = Date.now() - startTime;
       console.log(`Market analysis completed in ${executionTime}ms`);
     } catch (error) {
       console.error("Error performing market analysis:", error);
+      this.emitError("Error performing market analysis");
     }
   }
 
-  // Update orders based on current market conditions (high frequency)
+  // Analyze a single coin
+  private async analyzeCoin(coin: string): Promise<void> {
+    try {
+      // Get candles for technical analysis
+      const candles = await this.hyperliquidService.getCandles(coin, 100);
+
+      if (candles.length === 0) {
+        console.log(`No candle data for ${coin}, skipping analysis`);
+        return;
+      }
+
+      // Initialize EMA history if not exists
+      if (!this.emaHistory.has(coin)) {
+        this.emaHistory.set(coin, { short: [], medium: [], long: [] });
+      }
+
+      // Initialize RSI history if not exists
+      if (!this.rsiHistory.has(coin)) {
+        this.rsiHistory.set(coin, []);
+      }
+
+      // Perform traditional technical analysis
+      const analysis = analyzeCandles(candles);
+      const patterns = detectCandlestickPatterns(candles);
+      const volumeProfile = analyzeVolumeProfile(
+        candles,
+        this.config.orderLevels * 2
+      );
+
+      // Update EMA history
+      const emaHistory = this.emaHistory.get(coin)!;
+      if (analysis.ema.short !== null) {
+        emaHistory.short.push(analysis.ema.short);
+        if (emaHistory.short.length > 20) emaHistory.short.shift();
+      }
+      if (analysis.sma.medium !== null) {
+        emaHistory.medium.push(analysis.sma.medium);
+        if (emaHistory.medium.length > 20) emaHistory.medium.shift();
+      }
+      if (analysis.sma.long !== null) {
+        emaHistory.long.push(analysis.sma.long);
+        if (emaHistory.long.length > 20) emaHistory.long.shift();
+      }
+
+      // Update RSI history
+      const rsiHistory = this.rsiHistory.get(coin)!;
+      if (analysis.rsi !== null) {
+        rsiHistory.push(analysis.rsi);
+        if (rsiHistory.length > 20) rsiHistory.shift();
+      }
+
+      // Get current price
+      const orderBook = await this.hyperliquidService.getOrderBook(coin);
+      let currentPrice = 0;
+      if (
+        orderBook &&
+        orderBook.asks &&
+        orderBook.bids &&
+        orderBook.asks.length > 0 &&
+        orderBook.bids.length > 0
+      ) {
+        const bestAsk = parseFloat(orderBook.asks[0].p);
+        const bestBid = parseFloat(orderBook.bids[0].p);
+        currentPrice = (bestAsk + bestBid) / 2;
+        this.lastPrices.set(coin, currentPrice);
+      } else {
+        // Use last known price if order book is not available
+        currentPrice = this.lastPrices.get(coin) || 0;
+        if (currentPrice === 0 && candles.length > 0) {
+          // Use last candle close price if no price is available
+          currentPrice = candles[candles.length - 1].c;
+          this.lastPrices.set(coin, currentPrice);
+        }
+      }
+
+      // Perform enhanced market analysis
+      const marketCondition = analyzeMarketConditions(
+        candles,
+        currentPrice,
+        emaHistory
+      );
+
+      // Cache the results
+      this.cachedAnalysis.set(coin, analysis);
+      this.cachedPatterns.set(coin, patterns);
+      this.cachedVolumeProfile.set(coin, volumeProfile);
+      this.marketConditions.set(coin, marketCondition);
+      this.volatilityMetrics.set(coin, marketCondition.volatility);
+      this.lastAnalysisTime.set(coin, Date.now());
+
+      console.log(
+        `Market analysis completed for ${coin} - Sentiment: ${
+          marketCondition.sentiment
+        }, Volatility: ${marketCondition.volatility.toFixed(2)}`
+      );
+    } catch (error) {
+      console.error(`Error analyzing ${coin}:`, error);
+      this.emitError(`Error analyzing ${coin}: ${error}`);
+    }
+  }
+
+  // Update orders based on current market conditions
   private async updateOrders(): Promise<void> {
     try {
       const startTime = Date.now();
@@ -194,343 +342,409 @@ export class MarketMakerStrategy {
         availableCoins.includes(pair)
       );
 
-      for (const coin of validTradingPairs) {
-        // Skip if we've updated orders for this coin very recently
-        const lastUpdate = this.lastOrderUpdate.get(coin) || 0;
-        if (Date.now() - lastUpdate < this.config.orderRefreshRate * 0.8) {
-          continue;
-        }
-
-        // Get current order book
-        const orderBook = await this.hyperliquidService.getOrderBook(coin);
-
-        if (!orderBook || !orderBook.bids || !orderBook.asks) {
-          console.log(`Invalid order book format for ${coin}, skipping update`);
-          continue;
-        }
-
-        // Calculate mid price
-        const bestBid = parseFloat(orderBook.bids[0]?.p || "0");
-        const bestAsk = parseFloat(orderBook.asks[0]?.p || "0");
-
-        // Skip if we don't have valid bid/ask prices
-        if (bestBid === 0 || bestAsk === 0) {
-          console.log(`Invalid bid/ask prices for ${coin}, skipping update`);
-          continue;
-        }
-
-        const midPrice = (bestBid + bestAsk) / 2;
-        this.lastPrices.set(coin, midPrice);
-
-        // Get cached analysis results
-        const analysis = this.cachedAnalysis.get(coin);
-        const patterns = this.cachedPatterns.get(coin) || [];
-        const volumeProfile = this.cachedVolumeProfile.get(coin);
-
-        // Skip if we don't have analysis data
-        if (!analysis || !volumeProfile) {
-          console.log(`No analysis data for ${coin}, skipping order update`);
-          continue;
-        }
-
-        // Generate trading signal
-        const signal = generateSignals(analysis, patterns);
-
-        // Cancel existing orders for this coin
-        if (typeof this.hyperliquidService.cancelAllOrders === "function") {
-          await this.hyperliquidService.cancelAllOrders(coin);
-        }
-
-        // Calculate base spread based on volatility and signal
-        const baseSpread = this.calculateDynamicSpread(
-          coin,
-          analysis,
-          signal.confidence
+      // Process all trading pairs in parallel if enabled
+      if (this.config.simultaneousPairs) {
+        await Promise.all(
+          validTradingPairs.map(coin => this.updateOrdersForCoin(coin))
         );
-
-        // Place multiple orders at different price levels
-        await this.placeMultiLevelOrders(
-          coin,
-          midPrice,
-          baseSpread,
-          volumeProfile,
-          signal
-        );
-
-        // Update last order update time
-        this.lastOrderUpdate.set(coin, Date.now());
+      } else {
+        // Process sequentially if simultaneous processing is disabled
+        for (const coin of validTradingPairs) {
+          await this.updateOrdersForCoin(coin);
+        }
       }
 
       const executionTime = Date.now() - startTime;
-      if (executionTime > this.config.orderRefreshRate * 0.8) {
-        console.warn(
-          `Order update execution time (${executionTime}ms) is approaching the refresh rate (${this.config.orderRefreshRate}ms)`
-        );
-      }
+      console.log(`Orders updated in ${executionTime}ms`);
     } catch (error) {
       console.error("Error updating orders:", error);
+      this.emitError("Error updating orders");
     }
   }
 
-  // Place multiple orders at different price levels
-  private async placeMultiLevelOrders(
-    coin: string,
-    midPrice: number,
-    baseSpread: number,
-    volumeProfile: any,
-    signal: any
-  ): Promise<void> {
+  // Update orders for a single coin
+  private async updateOrdersForCoin(coin: string): Promise<void> {
     try {
-      const orderPromises: Promise<any>[] = [];
-      const highVolumeLevels = volumeProfile.highVolumeLevels || [];
-      const vwap = volumeProfile.volumeWeightedAvgPrice || midPrice;
-
-      // Determine if we should skew orders based on signal
-      // Increase skew factor for stronger signals to be more responsive
-      const signalSkew =
-        signal.signal === "buy"
-          ? Math.min(0.5, 0.3 + signal.confidence / 200) // Up to 0.5 for strong buy signals
-          : signal.signal === "sell"
-          ? Math.max(-0.5, -0.3 - signal.confidence / 200) // Down to -0.5 for strong sell signals
-          : 0;
-
-      // NEW: Check for breakout/breakdown in price action
-      const isBreakout = signal.reasons.some((r: string) =>
-        r.includes("breakout")
-      );
-      const isBreakdown = signal.reasons.some((r: string) =>
-        r.includes("breakdown")
-      );
-
-      // NEW: Check for strong momentum
-      const hasStrongMomentum = signal.reasons.some((r: string) =>
-        r.includes("momentum")
-      );
-
-      // Calculate base order size
-      const baseOrderSize = await this.calculateOrderSize(
-        coin,
-        midPrice,
-        signal
-      );
-      if (baseOrderSize <= 0) {
-        console.log(`Invalid order size for ${coin}, skipping order placement`);
+      // Get current market data
+      const orderBook = await this.hyperliquidService.getOrderBook(coin);
+      if (
+        !orderBook ||
+        !orderBook.asks ||
+        !orderBook.bids ||
+        orderBook.asks.length === 0 ||
+        orderBook.bids.length === 0
+      ) {
+        console.log(`Incomplete order book data for ${coin}, skipping update`);
         return;
       }
 
-      // Get minimum order size for this coin
-      const minOrderSize = this.hyperliquidService.getMinimumSize(coin);
-      console.log(`Minimum order size for ${coin}: ${minOrderSize}`);
+      // Calculate mid price
+      const bestAsk = parseFloat(orderBook.asks[0].p);
+      const bestBid = parseFloat(orderBook.bids[0].p);
 
-      // NEW: Determine order level distribution based on market conditions
-      let orderLevels = this.config.orderLevels;
-      let orderSpacing = this.config.orderSpacing;
-
-      // During breakouts/breakdowns, concentrate orders closer to market price
-      if (isBreakout || isBreakdown || hasStrongMomentum) {
-        // Reduce number of levels and tighten spacing during strong directional moves
-        orderLevels = Math.max(2, Math.floor(orderLevels * 0.7));
-        orderSpacing = orderSpacing * 0.8;
-        console.log(
-          `Detected strong directional move for ${coin}, concentrating orders closer to market`
+      // Validate best ask and bid
+      if (isNaN(bestAsk) || isNaN(bestBid) || bestAsk <= 0 || bestBid <= 0) {
+        console.error(
+          `Invalid order book prices for ${coin}: bestAsk=${bestAsk}, bestBid=${bestBid}`
         );
+        return;
       }
 
-      // Place orders at multiple levels
-      for (let i = 0; i < orderLevels; i++) {
-        // Calculate spread for this level (increases with distance from mid price)
-        const levelMultiplier = 1 + i * orderSpacing;
+      const midPrice = (bestAsk + bestBid) / 2;
 
-        // Calculate buy price - adjust based on volume profile if enabled
-        let buySpread = baseSpread * levelMultiplier;
-        let buyPrice = midPrice * (1 - buySpread / 100);
+      // Update last price
+      this.lastPrices.set(coin, midPrice);
 
-        // Adjust buy price towards high volume levels if enabled
-        if (this.config.volumeBasedPricing && highVolumeLevels.length > i) {
-          const volumeLevel = highVolumeLevels[i].price;
-          // Weight between VWAP-based price and volume-based price
-          if (volumeLevel < vwap) {
-            // Increase weight during breakouts for more aggressive entries
-            const weight =
-              (this.config.aggressiveness / 10) * (isBreakout ? 1.3 : 1.0);
-            buyPrice = buyPrice * (1 - weight) + volumeLevel * weight;
-          }
-        }
+      // Get market condition or perform a quick analysis if needed
+      let marketCondition = this.marketConditions.get(coin);
 
-        // Adjust for signal skew (more buy orders if bullish)
-        const buySkewMultiplier =
-          1 + (signalSkew * (orderLevels - i)) / orderLevels;
+      // If we don't have market condition or it's too old, perform a quick analysis
+      const now = Date.now();
+      const lastAnalysisTime = this.lastAnalysisTime.get(coin) || 0;
+      const analysisAge = now - lastAnalysisTime;
+      const maxAnalysisAge = this.config.updateInterval * 5; // 5x update interval
 
-        // Calculate sell price - adjust based on volume profile if enabled
-        let sellSpread = baseSpread * levelMultiplier;
-        let sellPrice = midPrice * (1 + sellSpread / 100);
+      if (!marketCondition || analysisAge > maxAnalysisAge) {
+        await this.analyzeCoin(coin);
+        marketCondition = this.marketConditions.get(coin);
 
-        // Adjust sell price towards high volume levels if enabled
-        if (
-          this.config.volumeBasedPricing &&
-          highVolumeLevels.length > i + orderLevels
-        ) {
-          const volumeLevel = highVolumeLevels[i + orderLevels].price;
-          // Weight between VWAP-based price and volume-based price
-          if (volumeLevel > vwap) {
-            // Increase weight during breakdowns for more aggressive entries
-            const weight =
-              (this.config.aggressiveness / 10) * (isBreakdown ? 1.3 : 1.0);
-            sellPrice = sellPrice * (1 - weight) + volumeLevel * weight;
-          }
-        }
-
-        // Adjust for signal skew (more sell orders if bearish)
-        const sellSkewMultiplier =
-          1 - (signalSkew * (orderLevels - i)) / orderLevels;
-
-        // NEW: Adjust size distribution based on market conditions
-        let sizeMultiplier;
-
-        if (isBreakout || isBreakdown || hasStrongMomentum) {
-          // During strong directional moves, concentrate more size in first few levels
-          sizeMultiplier = 1 - i * 0.25; // Steeper reduction (25% per level vs 15%)
-        } else {
-          // Normal market conditions
-          sizeMultiplier = 1 - i * 0.15; // Standard 15% reduction per level
-        }
-
-        // Apply signal-based size adjustments
-        let buySize = baseOrderSize * sizeMultiplier * buySkewMultiplier;
-        let sellSize = baseOrderSize * sizeMultiplier * sellSkewMultiplier;
-
-        // Ensure sizes meet minimum requirements
-        if (buySize < minOrderSize) {
-          // If calculated size is too small, either use minimum size or skip
-          if (i < 2) {
-            // Only use minimum size for the first 2 levels
-            buySize = minOrderSize;
-          } else {
-            buySize = 0; // Skip this order
-          }
-        }
-
-        if (sellSize < minOrderSize) {
-          // If calculated size is too small, either use minimum size or skip
-          if (i < 2) {
-            // Only use minimum size for the first 2 levels
-            sellSize = minOrderSize;
-          } else {
-            sellSize = 0; // Skip this order
-          }
-        }
-
-        // Place buy order if size is valid
-        if (buySize >= minOrderSize) {
-          orderPromises.push(
-            this.hyperliquidService.placeLimitOrder(
-              coin,
-              "buy",
-              buyPrice,
-              buySize
-            )
-          );
-        }
-
-        // Place sell order if size is valid
-        if (sellSize >= minOrderSize) {
-          orderPromises.push(
-            this.hyperliquidService.placeLimitOrder(
-              coin,
-              "sell",
-              sellPrice,
-              sellSize
-            )
-          );
+        if (!marketCondition) {
+          console.log(`No market condition data for ${coin}, skipping update`);
+          return;
         }
       }
 
-      // Wait for all orders to be placed
-      await Promise.all(orderPromises);
-      console.log(`Placed ${orderPromises.length} orders for ${coin}`);
+      // Cancel existing orders if needed
+      await this.cancelExistingOrdersIfNeeded(coin, midPrice);
+
+      // Get existing orders to avoid duplicates
+      const openOrders = await this.hyperliquidService.getOpenOrders();
+      const existingOrders = openOrders.filter(
+        (order: any) => order.coin === coin
+      );
+
+      // Count existing buy and sell orders
+      const existingBuyOrders = existingOrders.filter(
+        (order: any) => order.side === "B"
+      );
+      const existingSellOrders = existingOrders.filter(
+        (order: any) => order.side === "A"
+      );
+
+      // Determine if we need to place new orders
+      const targetOrdersPerSide = this.config.orderLevels;
+      const needsNewBuyOrders = existingBuyOrders.length < targetOrdersPerSide;
+      const needsNewSellOrders =
+        existingSellOrders.length < targetOrdersPerSide;
+
+      if (!needsNewBuyOrders && !needsNewSellOrders) {
+        return; // We have enough orders on both sides
+      }
+
+      // Calculate base spread
+      const baseSpread = this.calculateDynamicSpread(coin, marketCondition);
+
+      // Determine optimal price levels
+      const { buyPrices, sellPrices } = determineOptimalPriceLevels(
+        midPrice,
+        marketCondition,
+        baseSpread,
+        targetOrdersPerSide,
+        this.config.orderSpacing
+      );
+
+      // Validate price levels
+      if (
+        !buyPrices ||
+        !sellPrices ||
+        buyPrices.length === 0 ||
+        sellPrices.length === 0
+      ) {
+        console.error(`Failed to determine price levels for ${coin}`);
+        return;
+      }
+
+      // Calculate base order size
+      const baseOrderSize = await this.calculateBaseOrderSize(coin, midPrice);
+
+      // Validate base order size
+      if (isNaN(baseOrderSize) || baseOrderSize <= 0) {
+        console.error(`Invalid base order size for ${coin}: ${baseOrderSize}`);
+        return;
+      }
+
+      // Determine optimal order sizes
+      const { buySizes, sellSizes } = determineOptimalOrderSizes(
+        baseOrderSize,
+        marketCondition,
+        targetOrdersPerSide,
+        this.config.maxPositionSize
+      );
+
+      // Validate order sizes
+      if (
+        !buySizes ||
+        !sellSizes ||
+        buySizes.length === 0 ||
+        sellSizes.length === 0
+      ) {
+        console.error(`Failed to determine order sizes for ${coin}`);
+        return;
+      }
+
+      // Place buy orders if needed
+      if (needsNewBuyOrders) {
+        for (let i = 0; i < buyPrices.length; i++) {
+          // Skip if we already have enough buy orders
+          if (existingBuyOrders.length + i >= targetOrdersPerSide) {
+            break;
+          }
+
+          const price = buyPrices[i];
+          const size = buySizes[i];
+
+          // Additional validation
+          if (isNaN(price) || price <= 0) {
+            console.error(`Invalid buy price for ${coin}: ${price}`);
+            continue;
+          }
+
+          if (isNaN(size) || size <= 0) {
+            console.error(`Invalid buy size for ${coin}: ${size}`);
+            continue;
+          }
+
+          // Check if price is too far from market price
+          const priceDeviation = Math.abs(price - midPrice) / midPrice;
+          if (priceDeviation > 0.5) {
+            console.error(
+              `Buy price ${price} for ${coin} is too far from mid price ${midPrice}`
+            );
+            continue;
+          }
+
+          // Check if we already have an order at this price
+          const hasExistingOrder = existingBuyOrders.some(
+            (order: any) =>
+              Math.abs(parseFloat(order.price) - price) / price < 0.001
+          );
+
+          if (!hasExistingOrder) {
+            await this.placeSingleOrder(coin, "B", price, size);
+          }
+        }
+      }
+
+      // Place sell orders if needed
+      if (needsNewSellOrders) {
+        for (let i = 0; i < sellPrices.length; i++) {
+          // Skip if we already have enough sell orders
+          if (existingSellOrders.length + i >= targetOrdersPerSide) {
+            break;
+          }
+
+          const price = sellPrices[i];
+          const size = sellSizes[i];
+
+          // Additional validation
+          if (isNaN(price) || price <= 0) {
+            console.error(`Invalid sell price for ${coin}: ${price}`);
+            continue;
+          }
+
+          if (isNaN(size) || size <= 0) {
+            console.error(`Invalid sell size for ${coin}: ${size}`);
+            continue;
+          }
+
+          // Check if price is too far from market price
+          const priceDeviation = Math.abs(price - midPrice) / midPrice;
+          if (priceDeviation > 0.5) {
+            console.error(
+              `Sell price ${price} for ${coin} is too far from mid price ${midPrice}`
+            );
+            continue;
+          }
+
+          // Check if we already have an order at this price
+          const hasExistingOrder = existingSellOrders.some(
+            (order: any) =>
+              Math.abs(parseFloat(order.price) - price) / price < 0.001
+          );
+
+          if (!hasExistingOrder) {
+            await this.placeSingleOrder(coin, "A", price, size);
+          }
+        }
+      }
+
+      // Update last order update time
+      this.lastOrderUpdate.set(coin, Date.now());
     } catch (error) {
-      console.error(`Error placing multi-level orders for ${coin}:`, error);
+      console.error(`Error updating orders for ${coin}:`, error);
+      this.emitError(`Failed to update orders for ${coin}: ${error}`);
+    }
+  }
+
+  // Place a single order
+  private async placeSingleOrder(
+    coin: string,
+    side: "B" | "A",
+    price: number,
+    size: number
+  ): Promise<void> {
+    try {
+      // Validate price and size
+      if (price <= 0) {
+        console.error(`Invalid price for ${coin}: ${price} (must be positive)`);
+        return;
+      }
+
+      if (size <= 0) {
+        console.error(`Invalid size for ${coin}: ${size} (must be positive)`);
+        return;
+      }
+
+      // Get current market price to validate against
+      const marketPrice = this.lastPrices.get(coin);
+      if (marketPrice) {
+        // Check if price is too far from market price (95% limit)
+        const deviation = Math.abs(price - marketPrice) / marketPrice;
+        if (deviation > 0.95) {
+          console.error(
+            `Price ${price} for ${coin} is too far from market price ${marketPrice} (${(
+              deviation * 100
+            ).toFixed(2)}% deviation)`
+          );
+          return;
+        }
+      }
+
+      // Format price and size according to exchange requirements
+      const formattedPrice = this.hyperliquidService.formatPriceForCoin(
+        price,
+        coin
+      );
+      const minSize = this.hyperliquidService.getMinimumSize(coin);
+      const formattedSize = Math.max(size, minSize);
+
+      console.log(
+        `Placing ${
+          side === "B" ? "buy" : "sell"
+        } order for ${coin} at ${price} with size ${formattedSize}`
+      );
+
+      // Place the order - FIXED: correct parameter order
+      const response = await this.hyperliquidService.placeLimitOrder(
+        coin,
+        side,
+        price, // Pass the original price, the service will format it
+        formattedSize,
+        false // Not reduce-only
+      );
+
+      // Store the order ID
+      if (response.success && response.orderId) {
+        const orderIds = this.orderIds.get(coin) || [];
+        orderIds.push(response.orderId.toString());
+        this.orderIds.set(coin, orderIds);
+      }
+    } catch (error) {
+      console.error(
+        `Error placing ${side === "B" ? "buy" : "sell"} order for ${coin}:`,
+        error
+      );
+      this.emitError(`Failed to place order for ${coin}: ${error}`);
+    }
+  }
+
+  // Cancel existing orders if needed
+  private async cancelExistingOrdersIfNeeded(
+    coin: string,
+    currentPrice: number
+  ): Promise<void> {
+    try {
+      // Get market condition
+      const marketCondition = this.marketConditions.get(coin);
+      if (!marketCondition) {
+        return; // No market condition data, skip cancellation
+      }
+
+      // Get existing orders for this coin
+      const openOrders = await this.hyperliquidService.getOpenOrders();
+      const coinOrders = openOrders.filter((order: any) => order.coin === coin);
+
+      if (coinOrders.length === 0) {
+        return; // No orders to cancel
+      }
+
+      // Calculate price thresholds based on volatility
+      const volatilityFactor = 1 + marketCondition.volatility;
+      const upperThreshold =
+        currentPrice * (1 + this.config.maxSpread * volatilityFactor);
+      const lowerThreshold =
+        currentPrice * (1 - this.config.maxSpread * volatilityFactor);
+
+      // Check if any orders are outside the threshold
+      const ordersToCancel = coinOrders.filter((order: any) => {
+        const orderPrice = parseFloat(order.price);
+        return orderPrice > upperThreshold || orderPrice < lowerThreshold;
+      });
+
+      // Also cancel orders if market sentiment has changed significantly
+      const lastSentiment = this.marketConditions.get(coin)?.sentiment;
+      if (
+        (lastSentiment &&
+          lastSentiment !== marketCondition.sentiment &&
+          lastSentiment === "bullish" &&
+          marketCondition.sentiment === "bearish") ||
+        (lastSentiment === "bearish" && marketCondition.sentiment === "bullish")
+      ) {
+        console.log(
+          `Cancelling all orders for ${coin} due to significant sentiment change from ${lastSentiment} to ${marketCondition.sentiment}`
+        );
+        await this.hyperliquidService.cancelAllOrders(coin);
+        this.orderIds.set(coin, []);
+        return;
+      }
+
+      if (ordersToCancel.length > 0) {
+        console.log(
+          `Cancelling ${ordersToCancel.length} orders for ${coin} due to price movement`
+        );
+        await this.hyperliquidService.cancelAllOrders(coin);
+        this.orderIds.set(coin, []);
+      }
+    } catch (error) {
+      console.error(`Error cancelling orders for ${coin}:`, error);
+      this.emitError(`Error cancelling orders for ${coin}: ${error}`);
     }
   }
 
   // Calculate dynamic spread based on market conditions
   private calculateDynamicSpread(
     coin: string,
-    analysis: any,
-    signalConfidence: number
+    marketCondition: MarketCondition
   ): number {
-    // Start with the base spread from config
+    // Start with base spread from config
     let spread = (this.config.maxSpread + this.config.minSpread) / 2;
 
-    // Adjust based on RSI (higher RSI = higher sell spread, lower RSI = higher buy spread)
-    if (analysis.rsi !== null) {
-      if (analysis.rsi > 70) {
-        // Market might be overbought, increase spread for protection
-        spread += 0.2; // Increased from 0.1 for more responsiveness
-      } else if (analysis.rsi < 30) {
-        // Market might be oversold, increase spread for protection
-        spread += 0.2; // Increased from 0.1 for more responsiveness
-      }
+    // Adjust based on volatility
+    spread *= 1 + marketCondition.volatility;
+
+    // Adjust based on Bollinger Band width
+    const bandWidth = marketCondition.technicalSignals.bollingerBands.width;
+    if (bandWidth !== null) {
+      // Wider bands = wider spread
+      spread *= 1 + bandWidth / 100;
     }
 
-    // Adjust based on Bollinger Bands width (volatility)
-    if (
-      analysis.bollingerBands.upper !== null &&
-      analysis.bollingerBands.lower !== null &&
-      analysis.bollingerBands.middle !== null
-    ) {
-      const bbWidth =
-        (analysis.bollingerBands.upper - analysis.bollingerBands.lower) /
-        analysis.bollingerBands.middle;
-
-      // Higher volatility = wider spread
-      spread += bbWidth * 0.7; // Increased from 0.5 for more responsiveness to volatility
+    // Adjust based on market sentiment
+    if (marketCondition.sentiment === "bullish") {
+      spread *= 0.9; // Tighter spread in bullish market
+    } else if (marketCondition.sentiment === "bearish") {
+      spread *= 1.1; // Wider spread in bearish market
     }
-
-    // NEW: Adjust based on short-term EMAs
-    if (
-      analysis.ema &&
-      analysis.ema.veryShort !== null &&
-      analysis.ema.short !== null
-    ) {
-      const emaDiff =
-        Math.abs(analysis.ema.veryShort - analysis.ema.short) /
-        analysis.ema.short;
-
-      // If EMAs are diverging rapidly, increase spread to account for short-term volatility
-      if (emaDiff > 0.005) {
-        // 0.5% difference
-        spread += emaDiff * 10; // Add up to 5% to spread for significant EMA divergence
-      }
-    }
-
-    // NEW: Adjust based on momentum
-    if (analysis.momentum !== null) {
-      const absMomentum = Math.abs(analysis.momentum);
-
-      // Higher momentum (in either direction) = slightly tighter spreads to capture movement
-      if (absMomentum > 3.0) {
-        spread -= 0.1; // Reduce spread slightly to capture momentum
-      } else if (absMomentum < 0.5) {
-        // Very low momentum = wider spreads due to potential range-bound conditions
-        spread += 0.1;
-      }
-    }
-
-    // NEW: Adjust for breakouts/breakdowns
-    if (
-      analysis.priceAction &&
-      (analysis.priceAction.isBreakout || analysis.priceAction.isBreakdown)
-    ) {
-      // During breakouts/breakdowns, reduce spread to capture the move
-      spread -= 0.15;
-    }
-
-    // Adjust based on signal confidence
-    spread -= signalConfidence / 150; // Increased from 200 for more responsiveness to strong signals
-
-    // Adjust based on aggressiveness setting
-    spread *= (10 - this.config.aggressiveness) / 10;
 
     // Ensure spread is within configured limits
     spread = Math.max(
@@ -541,71 +755,42 @@ export class MarketMakerStrategy {
     return spread;
   }
 
-  // Calculate order size based on account balance, risk, and signal
-  private async calculateOrderSize(
+  // Calculate base order size
+  private async calculateBaseOrderSize(
     coin: string,
-    price: number,
-    signal: any
+    price: number
   ): Promise<number> {
     try {
-      console.log(`
-=== STRATEGY ORDER SIZE CALCULATION ===
-Coin: ${coin}
-Price: $${price}
-Risk Percentage: ${this.config.riskPercentage}%
-Leverage: ${this.config.leverage}x
-Signal: ${signal.signal || "neutral"} (Confidence: ${signal.confidence || 0}%)
-`);
+      // Get account information
+      const accountInfo = await this.hyperliquidService.getAccountInfo();
+      const accountBalance = accountInfo.crossMarginSummary?.accountValue || 0;
 
-      // Base size calculation with leverage
-      const baseSize = parseFloat(
-        await this.hyperliquidService.calculateOrderSize(
-          coin,
-          price,
-          this.config.riskPercentage,
-          this.config.leverage // Pass leverage from config
-        )
-      );
-
-      // Adjust size based on signal confidence and direction
-      let adjustedSize = baseSize;
-      let signalAdjustment = 1;
-
-      if (signal.signal === "buy") {
-        // Increase buy size, decrease sell size
-        signalAdjustment = 1 + signal.confidence / 100;
-        adjustedSize *= signalAdjustment;
-      } else if (signal.signal === "sell") {
-        // Decrease buy size, increase sell size
-        signalAdjustment = 1 - signal.confidence / 100;
-        adjustedSize *= signalAdjustment;
+      if (accountBalance <= 0) {
+        console.warn(
+          "Account balance is zero or negative, using minimum order size"
+        );
+        return this.hyperliquidService.getMinimumSize(coin);
       }
 
-      // Adjust based on aggressiveness setting
-      const aggressivenessMultiplier = 1 + this.config.aggressiveness / 20;
-      adjustedSize *= aggressivenessMultiplier;
+      // Calculate base size based on risk percentage and account balance
+      const riskAmount = accountBalance * (this.config.riskPercentage / 100);
 
-      // Get minimum order size for this coin
+      // Adjust for leverage
+      const leveragedRiskAmount = riskAmount * this.config.leverage;
+
+      // Calculate base order size in USD
+      const baseOrderSizeUsd = leveragedRiskAmount / this.config.orderLevels;
+
+      // Convert to coin units
+      let baseOrderSize = baseOrderSizeUsd / price;
+
+      // Ensure minimum size
       const minSize = this.hyperliquidService.getMinimumSize(coin);
-
-      // Ensure minimum order size
-      const finalSize = Math.max(minSize, adjustedSize);
-
-      console.log(`
-Base Size: ${baseSize} ${coin}
-Signal Adjustment: ${signalAdjustment.toFixed(2)}x
-Aggressiveness Adjustment: ${aggressivenessMultiplier.toFixed(2)}x
-Adjusted Size: ${adjustedSize} ${coin}
-Minimum Size: ${minSize} ${coin}
-Final Size: ${finalSize} ${coin}
-USD Value: $${(finalSize * price).toFixed(2)}
-=================================================
-`);
-
-      return finalSize;
+      return Math.max(baseOrderSize, minSize);
     } catch (error) {
-      console.error("Error calculating order size:", error);
-      return 0;
+      console.error(`Error calculating order size for ${coin}:`, error);
+      this.emitError(`Error calculating order size for ${coin}: ${error}`);
+      return this.hyperliquidService.getMinimumSize(coin);
     }
   }
 

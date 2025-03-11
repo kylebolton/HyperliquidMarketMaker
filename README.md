@@ -1,30 +1,30 @@
 # Hyperliquid Market Maker
 
-A market-making application for the Hyperliquid decentralized exchange, built with Next.js and TypeScript.
+A professional market making application for the Hyperliquid exchange, built with Next.js and shadcn UI components.
 
 ## Features
 
-- **Automated Market Making**: Place and manage buy and sell orders around the mid-price with configurable spreads.
-- **Technical Analysis**: Utilizes candlestick patterns and indicators (RSI, Bollinger Bands, MACD, SMAs) to make informed trading decisions.
-- **Real-time Data**: WebSocket connections for live market data updates.
-- **Risk Management**: Configurable risk parameters to control exposure.
-- **User-friendly Interface**: Easy-to-use dashboard to monitor and control the market maker.
+- **Automated Market Making**: Set up automated market making strategies with customizable parameters
+- **Manual Market Making**: Place multiple bids and asks at different price levels
+- **Real-time Market Data**: View real-time market data including order books, trades, and price charts
+- **Position Management**: Monitor and manage your open positions and orders
+- **Technical Analysis**: Integrated technical analysis tools to inform your trading decisions
+- **Error Handling**: Sophisticated error handling to differentiate between legitimate problems and normal order rejections
 
 ## Getting Started
 
 ### Prerequisites
 
 - Node.js 18+ and npm
-- A Hyperliquid account with API credentials
-- An on-chain wallet address
+- A Hyperliquid account with API keys
 
 ### Installation
 
 1. Clone the repository:
 
    ```
-   git clone https://github.com/kylebolton/HyperliquidMarketMaker.git
-   cd HyperliquidMarketMaker
+   git clone https://github.com/yourusername/hyperliquid-market-maker.git
+   cd hyperliquid-market-maker
    ```
 
 2. Install dependencies:
@@ -33,58 +33,79 @@ A market-making application for the Hyperliquid decentralized exchange, built wi
    npm install
    ```
 
-3. Run the development server:
+3. Create a `.env` file in the root directory with your Hyperliquid API keys:
+
+   ```
+   NEXT_PUBLIC_API_KEY=your_api_key
+   NEXT_PUBLIC_API_SECRET=your_api_secret
+   NEXT_PUBLIC_WALLET_ADDRESS=your_wallet_address
+   ```
+
+4. Start the development server:
 
    ```
    npm run dev
    ```
 
-4. Open [http://localhost:3000](http://localhost:3000) in your browser.
+5. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-## Configuration
+## Usage
 
-The market maker can be configured through the UI with the following parameters:
+### Configuration
 
-- **API Key**: Your Hyperliquid API key
-- **API Secret**: Your Hyperliquid API secret
-- **Wallet Address**: Your on-chain wallet address
-- **Trading Pairs**: Comma-separated list of assets to trade (e.g., "BTC, ETH")
-- **Trading Amount**: Base amount in USD for each order
-- **Leverage**: Trading leverage (1x recommended for beginners)
-- **Min/Max Spread**: Minimum and maximum spread percentages
-- **Update Interval**: How often to update orders (in seconds)
-- **Risk Percentage**: Percentage of account balance to risk per trade
-- **Candle Interval**: Timeframe for technical analysis
+1. Navigate to the "Configuration" tab
+2. Enter your API keys and wallet address
+3. Configure your trading parameters including:
+   - Trading pairs
+   - Trading amount
+   - Spread percentages
+   - Order levels
+   - Update intervals
 
-## How It Works
+### Automated Market Making
 
-1. **Market Analysis**: The application fetches market data and performs technical analysis to determine optimal trading parameters.
-2. **Dynamic Spreads**: Spreads are adjusted based on market volatility and technical indicators.
-3. **Order Placement**: Buy and sell orders are placed around the mid-price with the calculated spread.
-4. **Order Management**: Existing orders are regularly canceled and replaced to adapt to changing market conditions.
+1. Configure your strategy parameters
+2. Click "Start Market Maker" to begin automated trading
+3. Monitor performance in real-time
+4. Click "Stop Market Maker" to halt trading
 
-## Technical Architecture
+### Manual Market Making
 
-- **Next.js Frontend**: React-based UI for configuration and monitoring
-- **TypeScript**: Type-safe code for reliability
-- **Hyperliquid SDK**: Integration with the Hyperliquid exchange API
-- **Trading Signals**: Library for technical analysis calculations
-- **WebSockets**: Real-time data updates
+1. Navigate to the "Market Maker" tab
+2. Select a coin and trading side (buy/sell)
+3. Set your price range and number of orders
+4. Click "Place Orders" to create multiple orders at once
+5. Monitor and manage your orders in the "Active Orders" tab
+6. View order history in the "Order History" tab
 
-## Security Considerations
+## Error Handling
 
-- API keys and secrets are stored locally and never sent to any server
-- All trading operations happen directly between your browser and Hyperliquid
-- Consider using a dedicated wallet with limited funds for market making
+The application distinguishes between different types of errors:
 
-## Disclaimer
+- **Critical Errors**: Serious issues that require immediate attention (network errors, authentication failures)
+- **Warnings**: Non-critical issues that may affect functionality
+- **Info**: Notifications about normal operations (like order rejections due to price constraints)
 
-This software is provided for educational and informational purposes only. Trading cryptocurrency involves significant risk. Use this software at your own risk. The authors are not responsible for any financial losses incurred while using this application.
+## Development
+
+### Project Structure
+
+- `/src/app`: Main application code
+- `/src/components`: React components including the UI library
+- `/src/lib`: Utility functions and helpers
+- `/src/app/services`: Service layer for API interactions
+
+### Built With
+
+- [Next.js](https://nextjs.org/) - React framework
+- [shadcn/ui](https://ui.shadcn.com/) - UI component library
+- [Hyperliquid API](https://hyperliquid.xyz/docs/api) - Exchange API
 
 ## License
 
-MIT
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Contributing
+## Acknowledgments
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+- Hyperliquid team for their excellent API documentation
+- shadcn for the beautiful UI components
