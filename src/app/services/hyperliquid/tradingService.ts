@@ -221,12 +221,12 @@ export class TradingService {
               if (coin === "BTC") {
                 const numPrice = Number(formattedPrice);
                 const tickSize = 0.1;
-                const tickCount = Math.floor(numPrice / tickSize);
+                const tickCount = Math.round(numPrice / tickSize);
                 strictPriceStr = (tickCount * tickSize).toFixed(1);
               } else {
                 const numPrice = Number(formattedPrice);
                 const tickSize = 0.01;
-                const tickCount = Math.floor(numPrice / tickSize);
+                const tickCount = Math.round(numPrice / tickSize);
                 strictPriceStr = (tickCount * tickSize).toFixed(2);
               }
 
@@ -879,7 +879,7 @@ export class TradingService {
       // For BTC, ensure price is divisible by tick size (0.1)
       if (coin === "BTC") {
         const tickSize = 0.1;
-        const tickCount = Math.floor(price / tickSize);
+        const tickCount = Math.round(price / tickSize);
         const roundedPrice = tickCount * tickSize;
         // Ensure exactly one decimal place
         return roundedPrice.toFixed(1);
@@ -888,7 +888,7 @@ export class TradingService {
       // For ETH, ensure price is divisible by tick size (0.01)
       if (coin === "ETH") {
         const tickSize = 0.01;
-        const tickCount = Math.floor(price / tickSize);
+        const tickCount = Math.round(price / tickSize);
         const roundedPrice = tickCount * tickSize;
         // Ensure exactly two decimal places
         return roundedPrice.toFixed(2);
@@ -896,7 +896,7 @@ export class TradingService {
 
       // For other coins, use default tick size of 0.01
       const tickSize = 0.01;
-      const tickCount = Math.floor(price / tickSize);
+      const tickCount = Math.round(price / tickSize);
       const roundedPrice = tickCount * tickSize;
       return roundedPrice.toFixed(2);
     } catch (error) {
@@ -913,7 +913,7 @@ export class TradingService {
       // For BTC, ensure size is divisible by 0.0001
       if (coin === "BTC") {
         const stepSize = 0.0001;
-        const steps = Math.floor(size / stepSize);
+        const steps = Math.round(size / stepSize);
         const formattedSize = (steps * stepSize).toFixed(4);
         // Validate the formatted size
         if (isNaN(Number(formattedSize)) || Number(formattedSize) <= 0) {
@@ -926,7 +926,7 @@ export class TradingService {
       // For ETH, ensure size is divisible by 0.01
       if (coin === "ETH") {
         const stepSize = 0.01;
-        const steps = Math.floor(size / stepSize);
+        const steps = Math.round(size / stepSize);
         const formattedSize = (steps * stepSize).toFixed(2);
         // Validate the formatted size
         if (isNaN(Number(formattedSize)) || Number(formattedSize) <= 0) {
@@ -938,7 +938,7 @@ export class TradingService {
 
       // For other coins, use default step size of 0.01
       const stepSize = 0.01;
-      const steps = Math.floor(size / stepSize);
+      const steps = Math.round(size / stepSize);
       const formattedSize = (steps * stepSize).toFixed(2);
       // Validate the formatted size
       if (isNaN(Number(formattedSize)) || Number(formattedSize) <= 0) {
