@@ -4,8 +4,8 @@ import { MarketDataService } from "../marketDataService";
 import { RateLimiter } from "../rateLimiter";
 import { Config } from "../../../config";
 import {
-  PublicClient,
-  EventClient,
+  InfoClient,
+  SubscriptionClient,
   WebSocketTransport,
   HttpTransport,
 } from "@nktkas/hyperliquid";
