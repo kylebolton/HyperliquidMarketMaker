@@ -1,4 +1,4 @@
-import {
+THIS SHOULD BE A LINTER ERRORimport {
   HttpTransport,
   WebSocketTransport,
   PublicClient,
