@@ -1,6 +1,6 @@
 import {
-  PublicClient,
-  EventClient,
+  InfoClient,
+  SubscriptionClient,
   WebSocketTransport,
 } from "@nktkas/hyperliquid";
 import { Candle } from "../../utils/technicalAnalysis";
@@ -10,8 +10,8 @@ import { retryWithBackoff, getIntervalInSeconds } from "./utils";
 import { Config } from "../../config";
 
 export class MarketDataService {
-  private publicClient: PublicClient;
-  private eventClient: EventClient;
+  private infoClient: InfoClient;
+  private subscriptionClient: SubscriptionClient;
   private wsTransport: WebSocketTransport;
   private config: Config;
   private rateLimiter: RateLimiter;
@@ -34,14 +34,14 @@ export class MarketDataService {
   private midPriceThrottleMs: number = 3000; // Only update mid prices every 3 seconds
 
   constructor(
-    publicClient: PublicClient,
-    eventClient: EventClient,
+    infoClient: InfoClient,
+    subscriptionClient: SubscriptionClient,
     wsTransport: WebSocketTransport,
     config: Config,
     rateLimiter: RateLimiter
   ) {
-    this.publicClient = publicClient;
-    this.eventClient = eventClient;
+    this.infoClient = infoClient;
+    this.subscriptionClient = subscriptionClient;
     this.wsTransport = wsTransport;
     this.config = config;
     this.rateLimiter = rateLimiter;
@@ -70,7 +70,7 @@ export class MarketDataService {
 
       // Subscribe to all mid prices
       try {
-        const allMidsSub = await this.eventClient.allMids((data: any) => {
+        const allMidsSub = await this.subscriptionClient.allMids((data: any) => {
           // Throttle mid price updates
           const now = Date.now();
           if (now - this.lastMidPriceUpdate < this.midPriceThrottleMs) {
@@ -97,7 +97,7 @@ export class MarketDataService {
 
         try {
           // Subscribe to order book
-          const bookSub = await this.eventClient.l2Book(
+          const bookSub = await this.subscriptionClient.l2Book(
             { coin },
             (data: any) => {
               // Throttle order book updates
@@ -202,7 +202,7 @@ export class MarketDataService {
           this.activeSubscriptions.set(`book:${coin}`, bookSub);
 
           // Subscribe to trades
-          const tradesSub = await this.eventClient.trades(
+          const tradesSub = await this.subscriptionClient.trades(
             { coin },
             (data: any) => {
               // Throttle trade updates
@@ -535,7 +535,7 @@ export class MarketDataService {
   private async fetchMetadata(): Promise<void> {
     try {
       console.log("Fetching metadata from Hyperliquid API...");
-      this.metadata = await this.publicClient.meta();
+      this.metadata = await this.infoClient.meta();
       this.lastMetaFetch = Date.now();
       console.log("Metadata fetched successfully");
     } catch (error) {
