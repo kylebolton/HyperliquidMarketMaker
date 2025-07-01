@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import * as z from "zod";
 import { HyperliquidService } from "@/app/services/hyperliquid/compatibility";
 import { MarketMakerStrategy } from "@/app/services/marketMakerStrategy";
@@ -18,6 +18,40 @@ import {
   configFormSchema,
   orderFormSchema,
 } from "./types";
+
+// Define ErrorType here since it's not exported from types
+type ErrorType = "critical" | "warning" | "info";
+
+// Define interfaces for API data
+interface CrossMarginSummary {
+  accountValue?: string;
+  freeCollateral?: string;
+  [key: string]: unknown;
+}
+
+interface AccountInfo {
+  crossMarginSummary?: CrossMarginSummary;
+  [key: string]: unknown;
+}
+
+interface Position {
+  coin: string;
+  size: string | number;
+  entryPrice: string | number;
+  markPrice: string | number;
+  unrealizedPnl: string | number;
+  realizedPnl: string | number;
+  [key: string]: unknown;
+}
+
+interface ApiOrder {
+  id?: string;
+  coin: string;
+  side: string;
+  price: string;
+  sz: string;
+  [key: string]: unknown;
+}
 
 interface MarketMakerProps {
   config: Config;
@@ -41,8 +75,8 @@ export function MarketMaker({
   const [errors, setErrors] = useState<ErrorMessage[]>([]);
   const [marketPrice, setMarketPrice] = useState<number | null>(null);
   const [selectedCoin, setSelectedCoin] = useState<string>("");
-  const [accountInfo, setAccountInfo] = useState<any>(null);
-  const [positions, setPositions] = useState<any[]>([]);
+  const [accountInfo, setAccountInfo] = useState<AccountInfo | null>(null);
+  const [positions, setPositions] = useState<Position[]>([]);
   const [pnlData, setPnlData] = useState<{
     totalUnrealizedPnl: number;
     totalRealizedPnl: number;
@@ -54,74 +88,68 @@ export function MarketMaker({
     useState<NodeJS.Timeout | null>(null);
   const [dataRefreshInterval, setDataRefreshInterval] =
     useState<NodeJS.Timeout | null>(null);
-  const [selectedPairs, setSelectedPairs] = useState<string[]>([]);
-  const [marketConditions, setMarketConditions] = useState<Map<string, any>>(
-    new Map()
-  );
   const [coinPrices, setCoinPrices] = useState<Map<string, number>>(new Map());
 
-  // Fetch available coins on component mount
-  useEffect(() => {
-    if (hyperliquidService) {
-      fetchAvailableCoins();
-    }
-  }, [hyperliquidService]);
-
-  // Update market price when selected coin changes
-  useEffect(() => {
-    if (selectedCoin && hyperliquidService) {
-      fetchMarketPrice(selectedCoin);
-    }
-  }, [selectedCoin, hyperliquidService]);
-
   // Fetch available coins from the exchange
-  const fetchAvailableCoins = async () => {
+  const fetchAvailableCoins = useCallback(async () => {
     try {
       if (!hyperliquidService) return;
       const coins = await hyperliquidService.getAvailableCoins();
       setAvailableCoins(coins);
       if (coins.length > 0) {
         setSelectedCoin(coins[0]);
-
-        // Initialize selected pairs with BTC and ETH if available
-        const defaultPairs = ["BTC", "ETH"].filter(pair =>
-          coins.includes(pair)
-        );
-        setSelectedPairs(defaultPairs);
       }
     } catch (error) {
       handleError("Failed to fetch available coins", error, "critical");
     }
-  };
+  }, [hyperliquidService]);
 
   // Fetch current market price for a coin
-  const fetchMarketPrice = async (coin: string) => {
-    try {
-      if (!hyperliquidService) return;
-      const orderBook = await hyperliquidService.getOrderBook(coin);
-      if (
-        orderBook &&
-        orderBook.asks &&
-        orderBook.asks.length > 0 &&
-        orderBook.bids &&
-        orderBook.bids.length > 0
-      ) {
-        const midPrice =
-          (parseFloat(orderBook.asks[0].p) + parseFloat(orderBook.bids[0].p)) /
-          2;
+  const fetchMarketPrice = useCallback(
+    async (coin: string) => {
+      try {
+        if (!hyperliquidService) return;
+        const orderBook = await hyperliquidService.getOrderBook(coin);
+        if (
+          orderBook &&
+          orderBook.asks &&
+          orderBook.asks.length > 0 &&
+          orderBook.bids &&
+          orderBook.bids.length > 0
+        ) {
+          const midPrice =
+            (parseFloat(orderBook.asks[0].p) +
+              parseFloat(orderBook.bids[0].p)) /
+            2;
 
-        // Update both the marketPrice state and the coinPrices map
-        setMarketPrice(midPrice);
-        setCoinPrices(prevPrices => {
-          const newPrices = new Map(prevPrices);
-          newPrices.set(coin, midPrice);
-          return newPrices;
-        });
+          // Update both the marketPrice state and the coinPrices map
+          setMarketPrice(midPrice);
+          setCoinPrices(prevPrices => {
+            const newPrices = new Map(prevPrices);
+            newPrices.set(coin, midPrice);
+            return newPrices;
+          });
+        }
+      } catch (error) {
+        handleError("Failed to fetch market price", error, "warning");
       }
-    } catch (error) {
-      handleError("Failed to fetch market price", error, "warning");
+    },
+    [hyperliquidService]
+  );
+
+  // Fetch available coins on component mount
+  useEffect(() => {
+    if (hyperliquidService) {
+      fetchAvailableCoins();
     }
-  };
+  }, [hyperliquidService, fetchAvailableCoins]);
+
+  // Update market price when selected coin changes
+  useEffect(() => {
+    if (selectedCoin && hyperliquidService) {
+      fetchMarketPrice(selectedCoin);
+    }
+  }, [selectedCoin, hyperliquidService, fetchMarketPrice]);
 
   // Handle form submission
   const onSubmit = async (values: z.infer<typeof orderFormSchema>) => {
@@ -160,7 +188,7 @@ export function MarketMaker({
       // Place orders
       for (const order of newOrders) {
         try {
-          const result = await hyperliquidService.placeLimitOrder(
+          await hyperliquidService.placeLimitOrder(
             order.coin,
             order.side === "buy" ? "B" : "A",
             order.price,
@@ -172,7 +200,7 @@ export function MarketMaker({
           setOrders(prev =>
             prev.map(o => (o.id === order.id ? { ...o, status: "placed" } : o))
           );
-        } catch (error: any) {
+        } catch (error: unknown) {
           // Check if this is a legitimate error or just a rejected order
           const isLegitimateError = isLegitimateErrorMessage(error);
 
@@ -183,7 +211,7 @@ export function MarketMaker({
                 ? {
                     ...o,
                     status: "failed",
-                    error: error?.message || "Unknown error",
+                    error: (error as Error)?.message || "Unknown error",
                   }
                 : o
             )
@@ -213,8 +241,8 @@ export function MarketMaker({
   };
 
   // Handle errors
-  const handleError = (message: string, error: any, type: ErrorType) => {
-    const errorMessage = error?.message || "Unknown error";
+  const handleError = (message: string, error: unknown, type: ErrorType) => {
+    const errorMessage = (error as Error)?.message || "Unknown error";
     const newError: ErrorMessage = {
       id: Date.now().toString(),
       type,
@@ -232,8 +260,8 @@ export function MarketMaker({
   };
 
   // Check if an error is a legitimate problem or just a rejected order
-  const isLegitimateErrorMessage = (error: any): boolean => {
-    const errorMessage = error?.message || "";
+  const isLegitimateErrorMessage = (error: unknown): boolean => {
+    const errorMessage = (error as Error)?.message || "";
 
     // List of error messages that indicate legitimate problems
     const legitimateErrors = [
@@ -299,7 +327,7 @@ export function MarketMaker({
         }, {} as Record<string, Order[]>);
 
       // Cancel orders for each coin
-      for (const [coin, coinOrders] of Object.entries(placedOrdersByCoin)) {
+      for (const [coin] of Object.entries(placedOrdersByCoin)) {
         try {
           await hyperliquidService.cancelAllOrders(coin);
 
@@ -443,8 +471,8 @@ export function MarketMaker({
           // Get PNL data
           const pnlData = await hyperliquidService.getTotalPnl();
           setPnlData({
-            totalUnrealizedPnl: pnlData.totalUnrealizedPnl,
-            totalRealizedPnl: pnlData.totalRealizedPnl,
+            totalUnrealizedPnl: pnlData.totalUnrealizedPnl || 0,
+            totalRealizedPnl: pnlData.totalRealizedPnl || 0,
           });
 
           // Get positions
@@ -454,7 +482,7 @@ export function MarketMaker({
 
           // Get open orders
           const openOrders = await hyperliquidService.getOpenOrders();
-          const formattedOrders = openOrders.map((order: any) => ({
+          const formattedOrders = openOrders.map((order: ApiOrder) => ({
             id: order.id || `order-${Date.now()}-${Math.random()}`,
             coin: order.coin,
             side: order.side === "B" ? "buy" : ("sell" as "buy" | "sell"),
@@ -465,11 +493,6 @@ export function MarketMaker({
           }));
 
           setOrders(formattedOrders);
-
-          // Get market conditions for each trading pair
-          if (marketMakerStrategy.getStatus) {
-            const status = marketMakerStrategy.getStatus();
-          }
         } catch (error) {
           handleError("Error refreshing data", error, "warning");
         }

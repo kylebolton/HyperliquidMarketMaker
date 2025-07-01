@@ -55,7 +55,7 @@ export async function retryWithBackoff<T>(
   maxRetries: number = 3,
   initialDelay: number = 2000,
   maxDelay: number = 20000,
-  isRetryableError: (error: any) => boolean = () => true
+  isRetryableError: (error: unknown) => boolean = () => true
 ): Promise<T> {
   let attempt = 0;
   let delay = initialDelay;
@@ -65,7 +65,7 @@ export async function retryWithBackoff<T>(
       attempt++;
       console.log(`Attempt ${attempt}/${maxRetries + 1}`);
       return await fn();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(`Attempt ${attempt} failed:`, error);
 
       // Check if we should retry based on the error
@@ -81,13 +81,18 @@ export async function retryWithBackoff<T>(
       }
 
       // For 422 errors, we might want to wait longer as it could be a temporary API issue
+      const errorObj = error as {
+        status?: number;
+        response?: { status?: number };
+        message?: string;
+      };
       if (
-        error.status === 422 ||
-        (error.response && error.response.status === 422)
+        errorObj.status === 422 ||
+        (errorObj.response && errorObj.response.status === 422)
       ) {
         console.warn(
           `Received 422 error, waiting longer before retry: ${
-            error.message || JSON.stringify(error)
+            errorObj.message || JSON.stringify(error)
           }`
         );
         delay = Math.min(delay * 2, maxDelay); // Double the delay for 422 errors

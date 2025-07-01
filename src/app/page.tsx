@@ -1,8 +1,7 @@
 "use client";
 
 import { MarketMaker } from "@/components/MarketMaker";
-import { Config, defaultConfig } from "./config";
-import { useState } from "react";
+import { defaultConfig } from "./config";
 
 export default function Home() {
   return (

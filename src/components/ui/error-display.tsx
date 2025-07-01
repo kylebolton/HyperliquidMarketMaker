@@ -1,6 +1,6 @@
 import React from "react";
 import { AlertCircle, AlertTriangle, Info } from "lucide-react";
-import { ErrorType, ErrorCategory, ErrorInfo } from "@/lib/errorHandling";
+import { ErrorType, ErrorInfo } from "@/lib/errorHandling";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 

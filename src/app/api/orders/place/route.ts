@@ -3,10 +3,10 @@ import { TradingService } from "@/app/services/hyperliquid/tradingService";
 import { WalletService } from "@/app/services/hyperliquid/walletService";
 import { MarketDataService } from "@/app/services/hyperliquid/marketDataService";
 import { RateLimiter } from "@/app/services/hyperliquid/rateLimiter";
-import { Config } from "@/app/config";
+// Remove unused import
 import {
-  PublicClient,
-  EventClient,
+  InfoClient,
+  SubscriptionClient,
   WebSocketTransport,
   HttpTransport,
 } from "@nktkas/hyperliquid";
@@ -44,13 +44,15 @@ export async function POST(request: Request) {
     const rateLimiter = new RateLimiter(5, 60000, 1000); // 5 requests per minute, 1s between orders
     const httpTransport = new HttpTransport();
     const wsTransport = new WebSocketTransport();
-    const publicClient = new PublicClient({ transport: httpTransport });
-    const eventClient = new EventClient({ transport: wsTransport });
+    const infoClient = new InfoClient({ transport: httpTransport });
+    const subscriptionClient = new SubscriptionClient({
+      transport: wsTransport,
+    });
 
     const walletService = new WalletService(config, httpTransport);
     const marketDataService = new MarketDataService(
-      publicClient,
-      eventClient,
+      infoClient,
+      subscriptionClient,
       wsTransport,
       config,
       rateLimiter
@@ -62,11 +64,11 @@ export async function POST(request: Request) {
       config
     );
 
-    // Get wallet client
-    const walletClient = walletService.getWalletClient();
-    if (!walletClient) {
+    // Get exchange client
+    const exchangeClient = walletService.getExchangeClient();
+    if (!exchangeClient) {
       return NextResponse.json(
-        { error: "Failed to initialize wallet client" },
+        { error: "Failed to initialize exchange client" },
         { status: 500 }
       );
     }
@@ -87,10 +89,10 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json(result);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error placing order:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: (error as Error).message || "Internal server error" },
       { status: 500 }
     );
   }

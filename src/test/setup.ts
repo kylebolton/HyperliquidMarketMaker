@@ -15,6 +15,7 @@ class MockWebSocket {
   removeEventListener() {}
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 global.WebSocket = MockWebSocket as any;
 
 // Mock setTimeout

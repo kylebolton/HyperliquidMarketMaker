@@ -8,11 +8,22 @@ import {
 } from "@/components/ui/card";
 import { Config } from "@/app/config";
 
+interface CrossMarginSummary {
+  accountValue?: string;
+  freeCollateral?: string;
+  [key: string]: unknown;
+}
+
+interface AccountInfo {
+  crossMarginSummary?: CrossMarginSummary;
+  [key: string]: unknown;
+}
+
 interface TradingDashboardProps {
   config: Config;
   isRunning: boolean;
   isLoading: boolean;
-  accountInfo: any;
+  accountInfo: AccountInfo | null;
   pnlData: {
     totalUnrealizedPnl: number;
     totalRealizedPnl: number;
@@ -154,16 +165,20 @@ export function TradingDashboard({
                     <div>Account Value:</div>
                     <div className="font-medium">
                       $
-                      {accountInfo.crossMarginSummary?.accountValue.toFixed(
-                        2
-                      ) || "0.00"}
+                      {accountInfo.crossMarginSummary?.accountValue
+                        ? parseFloat(
+                            accountInfo.crossMarginSummary.accountValue
+                          ).toFixed(2)
+                        : "0.00"}
                     </div>
                     <div>Free Collateral:</div>
                     <div className="font-medium">
                       $
-                      {accountInfo.crossMarginSummary?.freeCollateral.toFixed(
-                        2
-                      ) || "0.00"}
+                      {accountInfo.crossMarginSummary?.freeCollateral
+                        ? parseFloat(
+                            accountInfo.crossMarginSummary.freeCollateral
+                          ).toFixed(2)
+                        : "0.00"}
                     </div>
                     <div>Unrealized PnL:</div>
                     <div

@@ -2,6 +2,7 @@ import { QueuedRequest } from "./types";
 import { retryWithBackoff } from "./utils";
 
 export class RateLimiter {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private requestQueue: Array<QueuedRequest<any>> = [];
   private isProcessingQueue = false;
   private rateLimitWindowMs = 10000; // 10 second window
@@ -9,6 +10,7 @@ export class RateLimiter {
   private requestTimestamps: number[] = [];
 
   // Order queue properties
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private orderQueue: Array<QueuedRequest<any>> = [];
   private isProcessingOrderQueue = false;
   private lastOrderTime = 0;

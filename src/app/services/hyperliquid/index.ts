@@ -1,18 +1,12 @@
 import {
   HttpTransport,
   WebSocketTransport,
-  PublicClient,
-  EventClient,
+  InfoClient,
+  SubscriptionClient,
 } from "@nktkas/hyperliquid";
 import { Config } from "../../config";
 import { Candle } from "../../utils/technicalAnalysis";
-import {
-  OrderBook,
-  PlaceOrderResponse,
-  AccountInfo,
-  PnlData,
-  Asset,
-} from "./types";
+import { OrderBook, PlaceOrderResponse, AccountInfo, PnlData } from "./types";
 import { RateLimiter } from "./rateLimiter";
 import { WalletService } from "./walletService";
 import { MarketDataService } from "./marketDataService";
@@ -25,8 +19,8 @@ export class HyperliquidService {
   private config: Config;
   private httpTransport: HttpTransport;
   private wsTransport: WebSocketTransport;
-  private publicClient: PublicClient;
-  private eventClient: EventClient;
+  private infoClient: InfoClient;
+  private subscriptionClient: SubscriptionClient;
 
   private rateLimiter: RateLimiter;
   private walletService: WalletService;
@@ -38,20 +32,20 @@ export class HyperliquidService {
 
     // Initialize transports and clients
     this.httpTransport = new HttpTransport({
-      keepalive: true,
       timeout: 30000,
-      retries: 3,
     });
     this.wsTransport = new WebSocketTransport();
-    this.publicClient = new PublicClient({ transport: this.httpTransport });
-    this.eventClient = new EventClient({ transport: this.wsTransport });
+    this.infoClient = new InfoClient({ transport: this.httpTransport });
+    this.subscriptionClient = new SubscriptionClient({
+      transport: this.wsTransport,
+    });
 
     // Initialize services
     this.rateLimiter = new RateLimiter();
     this.walletService = new WalletService(config, this.httpTransport);
     this.marketDataService = new MarketDataService(
-      this.publicClient,
-      this.eventClient,
+      this.infoClient,
+      this.subscriptionClient,
       this.wsTransport,
       config,
       this.rateLimiter
@@ -115,14 +109,14 @@ export class HyperliquidService {
   /**
    * Get recent trades for a specific coin
    */
-  async getTrades(coin: string, limit: number = 100): Promise<any[]> {
+  async getTrades(coin: string, limit: number = 100): Promise<unknown[]> {
     return this.marketDataService.getTrades(coin, limit);
   }
 
   /**
    * Get metadata about available markets
    */
-  async getMetadata(): Promise<any> {
+  async getMetadata(): Promise<unknown> {
     return this.marketDataService.getMetadata();
   }
 
@@ -210,7 +204,7 @@ export class HyperliquidService {
   /**
    * Get open orders
    */
-  async getOpenOrders(): Promise<any[]> {
+  async getOpenOrders(): Promise<unknown[]> {
     return this.tradingService.getOpenOrders();
   }
 
@@ -234,7 +228,7 @@ export class HyperliquidService {
   /**
    * Cancel all orders for a specific coin
    */
-  async cancelAllOrders(coin: string): Promise<any> {
+  async cancelAllOrders(coin: string): Promise<unknown> {
     return this.tradingService.cancelAllOrders(coin);
   }
 
@@ -272,7 +266,7 @@ export class HyperliquidService {
   /**
    * Get the wallet client
    */
-  public getWalletClient(): any {
+  public getWalletClient(): unknown {
     return this.walletService.getWalletClient();
   }
 }

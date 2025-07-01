@@ -1,10 +1,45 @@
-import { WalletClient } from "@nktkas/hyperliquid";
-import { PlaceOrderResponse, PnlData, AccountInfo } from "./types";
+import { AccountInfo } from "./types";
 import { RateLimiter } from "./rateLimiter";
 import { retryWithBackoff } from "./utils";
 import { Config } from "../../config";
 import { WalletService } from "./walletService";
 import { MarketDataService } from "./marketDataService";
+
+// Define interfaces for position data
+interface PositionData {
+  coin: string;
+  size: number;
+  absSize: number;
+  entryPrice: number;
+  markPrice: number;
+  unrealizedPnl: number;
+  realizedPnl: number;
+  liquidationPrice: number;
+  leverage: number;
+  side: string;
+}
+
+interface OpenOrder {
+  coin: string;
+  side: string;
+  price: string;
+  size: string;
+  orderId: string;
+  timestamp: number;
+  [key: string]: unknown;
+}
+
+interface AssetPosition {
+  coin: string;
+  position: string;
+  unrealizedPnl: string;
+  realizedPnl: string;
+  entryPx: string;
+  markPx: string;
+  liquidationPx: string;
+  leverage: string;
+  [key: string]: unknown;
+}
 
 export class TradingService {
   private walletService: WalletService;
@@ -14,7 +49,15 @@ export class TradingService {
 
   // PNL caching
   private _lastPnlRequestTime: number | null = null;
-  private _lastPnlResponse: PnlData | null = null;
+  private _lastPnlResponse: {
+    success: boolean;
+    totalUnrealizedPnl?: number;
+    totalRealizedPnl?: number;
+    positions?: PositionData[];
+    error?: string;
+    message?: string;
+    rawData?: unknown;
+  } | null = null;
 
   // Size decimals cache
   private szDecimalsCache: Map<string, number> = new Map();
@@ -43,7 +86,7 @@ export class TradingService {
   ): Promise<{
     success: boolean;
     message?: string;
-    data?: any;
+    data?: unknown;
     orderId?: string;
   }> {
     // Validate inputs
@@ -146,27 +189,16 @@ export class TradingService {
     // Use the enqueueOrder method instead of enqueueRequest
     return this.rateLimiter.enqueueOrder(async () => {
       try {
-        // Get wallet client
-        const walletClient = this.walletService.getWalletClient();
+        // Get exchange client
+        const exchangeClient = this.walletService.getExchangeClient();
 
-        if (!walletClient) {
+        if (!exchangeClient) {
           console.error(
-            "Cannot place limit order: wallet client not initialized"
+            "Cannot place limit order: exchange client not initialized"
           );
           return {
             success: false,
-            message: "Wallet client not initialized",
-          };
-        }
-
-        // Check if exchange property exists on wallet client
-        if (!(walletClient as any).exchange) {
-          console.error(
-            "Cannot place limit order: exchange not available on wallet client"
-          );
-          return {
-            success: false,
-            message: "Exchange not available on wallet client",
+            message: "Exchange client not initialized",
           };
         }
 
@@ -179,20 +211,6 @@ export class TradingService {
           };
         }
 
-        // Create order object with the formatted values
-        const orderObj = {
-          a: assetId,
-          b: side === "B",
-          p: formattedPrice,
-          s: formattedSize,
-          r: reduceOnly,
-          t: {
-            limit: {
-              tif: "Gtc",
-            },
-          },
-        };
-
         console.log("Placing order with parameters:", {
           coin,
           side,
@@ -202,15 +220,32 @@ export class TradingService {
         });
 
         try {
-          const result = await (walletClient as any).exchange.placeOrder(
-            orderObj
-          );
+          // Use the new ExchangeClient order method
+          const result = await exchangeClient.order({
+            orders: [
+              {
+                a: assetId,
+                b: side === "B",
+                p: formattedPrice,
+                s: formattedSize,
+                r: reduceOnly,
+                t: {
+                  limit: {
+                    tif: "Gtc",
+                  },
+                },
+              },
+            ],
+            grouping: "na",
+          });
+
           return {
             success: true,
+            message: "Order placed successfully",
             data: result,
           };
-        } catch (error: any) {
-          const errorMessage = error?.message || String(error);
+        } catch (error: unknown) {
+          const errorMessage = (error as Error)?.message || String(error);
           console.error("Error placing order:", errorMessage);
 
           if (errorMessage.includes("price")) {
@@ -234,19 +269,30 @@ export class TradingService {
                 `Retrying with strictly rounded price: ${strictPriceStr}`
               );
 
-              const finalAttemptOrder = {
-                ...orderObj,
-                p: strictPriceStr,
-              };
+              const result = await exchangeClient.order({
+                orders: [
+                  {
+                    a: assetId,
+                    b: side === "B",
+                    p: strictPriceStr,
+                    s: formattedSize,
+                    r: reduceOnly,
+                    t: {
+                      limit: {
+                        tif: "Gtc",
+                      },
+                    },
+                  },
+                ],
+                grouping: "na",
+              });
 
-              const result = await (walletClient as any).exchange.placeOrder(
-                finalAttemptOrder
-              );
               return {
                 success: true,
+                message: "Order placed successfully after price adjustment",
                 data: result,
               };
-            } catch (finalError) {
+            } catch {
               return {
                 success: false,
                 message:
@@ -272,12 +318,12 @@ export class TradingService {
             };
           }
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error("Error in placeLimitOrder:", error);
         return {
           success: false,
           message:
-            "Failed to format order parameters. This may be due to an issue with the wallet client.",
+            "Failed to format order parameters. This may be due to an issue with the exchange client.",
         };
       }
     });
@@ -287,11 +333,11 @@ export class TradingService {
    * Get account information
    */
   async getAccountInfo(): Promise<AccountInfo> {
-    await this.walletService.ensureWalletInitialized();
-    const walletClient = this.walletService.getWalletClient();
+    await this.walletService.ensureExchangeInitialized();
+    const exchangeClient = this.walletService.getExchangeClient();
 
-    if (!walletClient) {
-      throw new Error("Wallet client is not initialized");
+    if (!exchangeClient) {
+      throw new Error("Exchange client is not initialized");
     }
 
     return this.rateLimiter.enqueueRequest(async () => {
@@ -338,12 +384,12 @@ export class TradingService {
   /**
    * Get open orders
    */
-  async getOpenOrders(): Promise<any[]> {
-    await this.walletService.ensureWalletInitialized();
-    const walletClient = this.walletService.getWalletClient();
+  async getOpenOrders(): Promise<OpenOrder[]> {
+    await this.walletService.ensureExchangeInitialized();
+    const exchangeClient = this.walletService.getExchangeClient();
 
-    if (!walletClient) {
-      throw new Error("Wallet client is not initialized");
+    if (!exchangeClient) {
+      throw new Error("Exchange client is not initialized");
     }
 
     return this.rateLimiter.enqueueRequest(async () => {
@@ -377,27 +423,27 @@ export class TradingService {
   }
 
   /**
-   * Ensure the wallet client is initialized and the exchange property is available
-   * @returns True if the wallet client is ready for trading operations
+   * Ensure the exchange client is initialized and ready for trading operations
+   * @returns True if the exchange client is ready for trading operations
    */
-  private ensureWalletReady(): boolean {
+  private ensureExchangeReady(): boolean {
     try {
-      // First, ensure the wallet is initialized
-      this.walletService.ensureWalletInitialized();
+      // First, ensure the exchange client is initialized
+      this.walletService.ensureExchangeInitialized();
 
-      // Then, ensure the exchange property is available
-      const exchangeReady = this.walletService.ensureExchangeProperty();
+      // Check if the exchange client is available
+      const exchangeClient = this.walletService.getExchangeClient();
 
-      if (!exchangeReady) {
+      if (!exchangeClient) {
         console.warn(
-          "Exchange property is not available on wallet client. Trading operations may fail."
+          "Exchange client is not available. Trading operations may fail."
         );
         return false;
       }
 
       return true;
     } catch (error) {
-      console.error("Error ensuring wallet is ready:", error);
+      console.error("Error ensuring exchange is ready:", error);
       return false;
     }
   }
@@ -410,17 +456,17 @@ export class TradingService {
     success: boolean;
     totalUnrealizedPnl?: number;
     totalRealizedPnl?: number;
-    positions?: any[];
+    positions?: PositionData[];
     error?: string;
   }> {
     try {
-      // Ensure wallet is ready for trading operations
-      const isWalletReady = this.ensureWalletReady();
+      // Ensure exchange client is ready for trading operations
+      const isExchangeReady = this.ensureExchangeReady();
 
-      if (!isWalletReady) {
+      if (!isExchangeReady) {
         return {
           success: false,
-          error: "Wallet is not ready for trading operations",
+          error: "Exchange client is not ready for trading operations",
         };
       }
 
@@ -464,66 +510,6 @@ export class TradingService {
 
       this._lastPnlRequestTime = now;
 
-      // First check if we can use the wallet client's methods
-      const walletClient = this.walletService.getWalletClient();
-
-      // Try to use the wallet client's methods first if available
-      if (walletClient && (walletClient as any).exchange) {
-        try {
-          console.log("Attempting to get PNL data using wallet client...");
-          const userState = await (walletClient as any).exchange.userState(
-            formattedAddress
-          );
-
-          if (userState && userState.assetPositions) {
-            // Process the data from the wallet client
-            let totalUnrealizedPnl = 0;
-            let totalRealizedPnl = 0;
-            const positions: any[] = [];
-
-            userState.assetPositions.forEach((position: any) => {
-              const unrealizedPnl = parseFloat(position.unrealizedPnl) || 0;
-              const realizedPnl = parseFloat(position.realizedPnl) || 0;
-
-              totalUnrealizedPnl += unrealizedPnl;
-              totalRealizedPnl += realizedPnl;
-
-              positions.push({
-                coin: position.coin,
-                size: parseFloat(position.position) || 0,
-                absSize: Math.abs(parseFloat(position.position) || 0),
-                entryPrice: parseFloat(position.entryPx) || 0,
-                markPrice: parseFloat(position.markPx) || 0,
-                unrealizedPnl,
-                realizedPnl,
-                liquidationPrice: parseFloat(position.liquidationPx) || 0,
-                leverage: parseFloat(position.leverage) || 0,
-                side: parseFloat(position.position) > 0 ? "buy" : "sell",
-              });
-            });
-
-            const result = {
-              success: true,
-              message: "PNL data retrieved successfully via wallet client",
-              totalUnrealizedPnl,
-              totalRealizedPnl,
-              positions,
-              rawData: userState,
-            };
-
-            // Cache the response
-            this._lastPnlResponse = result;
-            return result;
-          }
-        } catch (walletError) {
-          console.warn(
-            "Failed to get PNL data using wallet client:",
-            walletError
-          );
-          // Fall back to direct API call
-        }
-      }
-
       // Use retryWithBackoff to handle potential API issues
       const apiData = await retryWithBackoff(
         async () => {
@@ -534,7 +520,7 @@ export class TradingService {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                type: "userState",
+                type: "clearinghouseState",
                 user: formattedAddress,
               }),
             });
@@ -576,10 +562,10 @@ export class TradingService {
       // Calculate total PNL from positions
       let totalUnrealizedPnl = 0;
       let totalRealizedPnl = 0;
-      const positions: any[] = [];
+      const positions: PositionData[] = [];
 
       if (apiData && apiData.assetPositions) {
-        apiData.assetPositions.forEach((position: any) => {
+        apiData.assetPositions.forEach((position: AssetPosition) => {
           const unrealizedPnl = parseFloat(position.unrealizedPnl) || 0;
           const realizedPnl = parseFloat(position.realizedPnl) || 0;
 
@@ -632,7 +618,7 @@ export class TradingService {
     success: boolean;
     message?: string;
     error?: string;
-    data?: any;
+    data?: unknown;
   }> {
     try {
       // Validate coin parameter
@@ -643,20 +629,20 @@ export class TradingService {
         };
       }
 
-      // Ensure the wallet is ready for trading
-      if (!this.ensureWalletReady()) {
+      // Ensure the exchange client is ready for trading
+      if (!this.ensureExchangeReady()) {
         return {
           success: false,
-          error: "Wallet is not ready for trading operations",
+          error: "Exchange client is not ready for trading operations",
         };
       }
 
-      // Get the wallet client
-      const walletClient = this.walletService.getWalletClient();
-      if (!walletClient) {
+      // Get the exchange client
+      const exchangeClient = this.walletService.getExchangeClient();
+      if (!exchangeClient) {
         return {
           success: false,
-          error: "Wallet client is not available",
+          error: "Exchange client is not available",
         };
       }
 
@@ -672,74 +658,30 @@ export class TradingService {
         };
       }
 
-      // Check if exchange property exists on wallet client
-      if (!(walletClient as any).exchange) {
-        console.warn(
-          "Exchange not available on wallet client. Attempting to fix..."
-        );
-
-        // Try to ensure the exchange property is available
-        const exchangeReady = this.walletService.ensureExchangeProperty();
-        if (!exchangeReady) {
-          return {
-            success: false,
-            error: "Exchange not available on wallet client",
-          };
-        }
-      }
-
-      // Verify cancelByAssetId method exists
-      if (
-        typeof (walletClient as any).exchange.cancelByAssetId !== "function"
-      ) {
-        return {
-          success: false,
-          error: "cancelByAssetId method not available on exchange",
-        };
-      }
-
-      // Cancel all orders for this asset
       try {
         console.log(
           `Attempting to cancel all orders for ${coin} (asset ID: ${assetId})`
         );
-        const response = await (walletClient as any).exchange.cancelByAssetId(
-          assetId
-        );
+
+        // Use the new ExchangeClient cancel method
+        const response = await exchangeClient.cancel({
+          cancels: [{ a: assetId, o: 0 }],
+        });
 
         console.log(`Cancel orders response:`, response);
-
-        // Check if the response contains an error about orders already canceled
-        // This is not a critical error, so we can treat it as a success
-        if (
-          response &&
-          response.error &&
-          typeof response.error === "string" &&
-          (response.error.includes("already canceled") ||
-            response.error.includes("never placed") ||
-            response.error.includes("Order was never placed"))
-        ) {
-          console.log(
-            `No active orders to cancel for ${coin} (asset ID: ${assetId})`
-          );
-          return {
-            success: true,
-            message: `No active orders to cancel for ${coin}`,
-            data: response,
-          };
-        }
 
         return {
           success: true,
           message: `All orders for ${coin} cancelled successfully`,
           data: response,
         };
-      } catch (cancelError: any) {
-        console.error(`Error in cancelByAssetId for ${coin}:`, cancelError);
+      } catch (cancelError: unknown) {
+        console.error(`Error in cancel for ${coin}:`, cancelError);
 
         // Check if the error is about orders already canceled or never placed
         // This is not a critical error, so we can treat it as a success
-        const errorMessage = cancelError?.message || String(cancelError);
+        const errorMessage =
+          (cancelError as Error)?.message || String(cancelError);
         if (
           errorMessage.includes("already canceled") ||
           errorMessage.includes("never placed") ||
@@ -757,15 +699,17 @@ export class TradingService {
         return {
           success: false,
           error: `Failed to cancel orders: ${
-            cancelError.message || String(cancelError)
+            (cancelError as Error).message || String(cancelError)
           }`,
         };
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(`Error cancelling orders for ${coin}:`, error);
       return {
         success: false,
-        error: `Failed to cancel orders: ${error.message || String(error)}`,
+        error: `Failed to cancel orders: ${
+          (error as Error).message || String(error)
+        }`,
       };
     }
   }

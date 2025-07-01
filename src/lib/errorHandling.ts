@@ -184,6 +184,7 @@ function extractErrorMessage(error: unknown): string {
 
   if (typeof error === "object" && error !== null) {
     // Try to extract message from common API error formats
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const anyError = error as any;
     if (anyError.message) return anyError.message;
     if (anyError.error?.message) return anyError.error.message;

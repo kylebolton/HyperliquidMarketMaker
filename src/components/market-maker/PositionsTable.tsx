@@ -15,8 +15,17 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
+interface Position {
+  coin: string;
+  size: string | number;
+  entryPrice: string | number;
+  markPrice: string | number;
+  unrealizedPnl: string | number;
+  realizedPnl: string | number;
+}
+
 interface PositionsTableProps {
-  positions: any[];
+  positions: Position[];
   pnlData: {
     totalUnrealizedPnl: number;
     totalRealizedPnl: number;
@@ -45,41 +54,41 @@ export function PositionsTable({ positions, pnlData }: PositionsTableProps) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {positions.map((position: any) => (
+              {positions.map((position: Position) => (
                 <TableRow key={position.coin}>
                   <TableCell className="font-medium">{position.coin}</TableCell>
                   <TableCell
                     className={
-                      parseFloat(position.size) >= 0
+                      parseFloat(position.size.toString()) >= 0
                         ? "text-green-500"
                         : "text-red-500"
                     }
                   >
-                    {parseFloat(position.size).toFixed(6)}
+                    {parseFloat(position.size.toString()).toFixed(6)}
                   </TableCell>
                   <TableCell>
-                    ${parseFloat(position.entryPrice).toFixed(2)}
+                    ${parseFloat(position.entryPrice.toString()).toFixed(2)}
                   </TableCell>
                   <TableCell>
-                    ${parseFloat(position.markPrice).toFixed(2)}
+                    ${parseFloat(position.markPrice.toString()).toFixed(2)}
                   </TableCell>
                   <TableCell
                     className={
-                      parseFloat(position.unrealizedPnl) >= 0
+                      parseFloat(position.unrealizedPnl.toString()) >= 0
                         ? "text-green-500"
                         : "text-red-500"
                     }
                   >
-                    ${parseFloat(position.unrealizedPnl).toFixed(2)}
+                    ${parseFloat(position.unrealizedPnl.toString()).toFixed(2)}
                   </TableCell>
                   <TableCell
                     className={
-                      parseFloat(position.realizedPnl) >= 0
+                      parseFloat(position.realizedPnl.toString()) >= 0
                         ? "text-green-500"
                         : "text-red-500"
                     }
                   >
-                    ${parseFloat(position.realizedPnl).toFixed(2)}
+                    ${parseFloat(position.realizedPnl.toString()).toFixed(2)}
                   </TableCell>
                 </TableRow>
               ))}

@@ -1,10 +1,8 @@
-import { Candle, AnalysisResult } from "./technicalAnalysis";
+import { Candle } from "./technicalAnalysis";
 import {
   calculateRSI,
   calculateBollingerBands,
   calculateMACD,
-  calculateSMAs,
-  calculateEMAs,
   calculateMomentum,
   analyzePriceAction,
 } from "./technicalAnalysis";

@@ -2,8 +2,8 @@ import { HyperliquidService } from "./hyperliquid/compatibility";
 import {
   analyzeCandles,
   detectCandlestickPatterns,
-  generateSignals,
   analyzeVolumeProfile,
+  AnalysisResult,
 } from "../utils/technicalAnalysis";
 import {
   analyzeMarketConditions,
@@ -13,6 +13,22 @@ import {
 } from "../utils/marketAnalysis";
 import { Config } from "../config";
 import EventEmitter from "events";
+
+// Define interfaces for order and analysis data
+interface Order {
+  coin: string;
+  side: string;
+  price: string;
+  size: string;
+  orderId: string;
+  timestamp: number;
+  [key: string]: unknown;
+}
+
+interface VolumeProfile {
+  highVolumeLevels: { price: number; volume: number }[];
+  volumeWeightedAvgPrice: number;
+}
 
 // Define the strategy configuration interface
 export interface MarketMakerConfig {
@@ -32,14 +48,14 @@ export class MarketMakerStrategy {
   private hyperliquidService: HyperliquidService;
   private config: Config;
   private isRunning: boolean = false;
-  private activeOrders: Map<string, any[]> = new Map();
+  private activeOrders: Map<string, Order[]> = new Map();
   private lastPrices: Map<string, number> = new Map();
   private updateIntervalId: NodeJS.Timeout | null = null;
   private orderRefreshIntervalId: NodeJS.Timeout | null = null;
   private lastAnalysisTime: Map<string, number> = new Map();
-  private cachedAnalysis: Map<string, any> = new Map();
+  private cachedAnalysis: Map<string, AnalysisResult> = new Map();
   private cachedPatterns: Map<string, string[]> = new Map();
-  private cachedVolumeProfile: Map<string, any> = new Map();
+  private cachedVolumeProfile: Map<string, VolumeProfile> = new Map();
   private orderIds: Map<string, string[]> = new Map();
   private lastOrderUpdate: Map<string, number> = new Map();
   private eventEmitter: EventEmitter = new EventEmitter();
@@ -58,16 +74,16 @@ export class MarketMakerStrategy {
   }
 
   // Add event listener methods
-  public on(event: string, listener: (...args: any[]) => void): void {
+  public on(event: string, listener: (...args: unknown[]) => void): void {
     this.eventEmitter.on(event, listener);
   }
 
-  public off(event: string, listener: (...args: any[]) => void): void {
+  public off(event: string, listener: (...args: unknown[]) => void): void {
     this.eventEmitter.off(event, listener);
   }
 
   // Helper method to safely emit errors
-  private emitError(errorMessage: string | any): void {
+  private emitError(errorMessage: string | Error): void {
     // Ensure errorMessage is a string
     const errorStr =
       typeof errorMessage === "string"
@@ -199,203 +215,142 @@ export class MarketMakerStrategy {
     }
   }
 
-  // Perform market analysis
+  // Perform market analysis for all trading pairs
   private async performMarketAnalysis(): Promise<void> {
     try {
-      const startTime = Date.now();
-
-      // Get available coins from the API to ensure we only process valid coins
-      const availableCoins = await this.hyperliquidService.getAvailableCoins();
-      const validTradingPairs = this.config.tradingPairs.filter(pair =>
-        availableCoins.includes(pair)
+      const validPairs = this.config.tradingPairs.filter(
+        pair => pair && pair.trim().length > 0
       );
 
-      // Process all trading pairs in parallel if enabled
-      if (this.config.simultaneousPairs) {
-        await Promise.all(
-          validTradingPairs.map(coin => this.analyzeCoin(coin))
-        );
-      } else {
-        // Process sequentially if simultaneous processing is disabled
-        for (const coin of validTradingPairs) {
-          await this.analyzeCoin(coin);
-        }
+      for (const coin of validPairs) {
+        await this.analyzeCoin(coin);
       }
-
-      const executionTime = Date.now() - startTime;
-      console.log(`Market analysis completed in ${executionTime}ms`);
     } catch (error) {
       console.error("Error performing market analysis:", error);
-      this.emitError("Error performing market analysis");
+      this.emitError(`Error performing market analysis: ${error}`);
     }
   }
 
-  // Analyze a single coin
+  // Analyze a specific coin
   private async analyzeCoin(coin: string): Promise<void> {
     try {
-      // Get candles for technical analysis
-      const candles = await this.hyperliquidService.getCandles(coin, 100);
+      console.log(`Analyzing ${coin}...`);
 
-      if (candles.length === 0) {
-        console.log(`No candle data for ${coin}, skipping analysis`);
+      // Get candle data
+      const candles = await this.hyperliquidService.getCandles(coin, 100);
+      if (!candles || candles.length === 0) {
+        console.warn(`No candle data available for ${coin}`);
         return;
       }
 
-      // Initialize EMA history if not exists
-      if (!this.emaHistory.has(coin)) {
-        this.emaHistory.set(coin, { short: [], medium: [], long: [] });
-      }
-
-      // Initialize RSI history if not exists
-      if (!this.rsiHistory.has(coin)) {
-        this.rsiHistory.set(coin, []);
-      }
-
-      // Perform traditional technical analysis
+      // Perform technical analysis
       const analysis = analyzeCandles(candles);
+      this.cachedAnalysis.set(coin, analysis);
+
+      // Detect candlestick patterns
       const patterns = detectCandlestickPatterns(candles);
-      const volumeProfile = analyzeVolumeProfile(
-        candles,
-        this.config.orderLevels * 2
-      );
+      this.cachedPatterns.set(coin, patterns);
 
-      // Update EMA history
-      const emaHistory = this.emaHistory.get(coin)!;
-      if (analysis.ema.short !== null) {
-        emaHistory.short.push(analysis.ema.short);
-        if (emaHistory.short.length > 20) emaHistory.short.shift();
-      }
-      if (analysis.sma.medium !== null) {
-        emaHistory.medium.push(analysis.sma.medium);
-        if (emaHistory.medium.length > 20) emaHistory.medium.shift();
-      }
-      if (analysis.sma.long !== null) {
-        emaHistory.long.push(analysis.sma.long);
-        if (emaHistory.long.length > 20) emaHistory.long.shift();
-      }
+      // Analyze volume profile
+      const volumeProfile = analyzeVolumeProfile(candles);
+      this.cachedVolumeProfile.set(coin, volumeProfile);
 
-      // Update RSI history
-      const rsiHistory = this.rsiHistory.get(coin)!;
-      if (analysis.rsi !== null) {
-        rsiHistory.push(analysis.rsi);
-        if (rsiHistory.length > 20) rsiHistory.shift();
-      }
-
-      // Get current price
-      const orderBook = await this.hyperliquidService.getOrderBook(coin);
-      let currentPrice = 0;
-      if (
-        orderBook &&
-        orderBook.asks &&
-        orderBook.bids &&
-        orderBook.asks.length > 0 &&
-        orderBook.bids.length > 0
-      ) {
-        const bestAsk = parseFloat(orderBook.asks[0].p);
-        const bestBid = parseFloat(orderBook.bids[0].p);
-        currentPrice = (bestAsk + bestBid) / 2;
-        this.lastPrices.set(coin, currentPrice);
-      } else {
-        // Use last known price if order book is not available
-        currentPrice = this.lastPrices.get(coin) || 0;
-        if (currentPrice === 0 && candles.length > 0) {
-          // Use last candle close price if no price is available
-          currentPrice = candles[candles.length - 1].c;
-          this.lastPrices.set(coin, currentPrice);
-        }
-      }
-
-      // Perform enhanced market analysis
+      // Determine market conditions
+      const currentPrice = candles[candles.length - 1].c;
       const marketCondition = analyzeMarketConditions(
         candles,
         currentPrice,
-        emaHistory
+        this.emaHistory.get(coin) || { short: [], medium: [], long: [] }
       );
-
-      // Cache the results
-      this.cachedAnalysis.set(coin, analysis);
-      this.cachedPatterns.set(coin, patterns);
-      this.cachedVolumeProfile.set(coin, volumeProfile);
       this.marketConditions.set(coin, marketCondition);
-      this.volatilityMetrics.set(coin, marketCondition.volatility);
+
+      // Update EMA history
+      if (analysis.ema.veryShort !== null && analysis.ema.short !== null) {
+        const emaHistory = this.emaHistory.get(coin) || {
+          short: [],
+          medium: [],
+          long: [],
+        };
+        emaHistory.short.push(analysis.ema.short);
+        if (emaHistory.short.length > 50) emaHistory.short.shift();
+
+        if (analysis.sma.medium !== null) {
+          emaHistory.medium.push(analysis.sma.medium);
+          if (emaHistory.medium.length > 50) emaHistory.medium.shift();
+        }
+
+        if (analysis.sma.long !== null) {
+          emaHistory.long.push(analysis.sma.long);
+          if (emaHistory.long.length > 50) emaHistory.long.shift();
+        }
+
+        this.emaHistory.set(coin, emaHistory);
+      }
+
+      // Update RSI history
+      if (analysis.rsi !== null) {
+        const rsiHistory = this.rsiHistory.get(coin) || [];
+        rsiHistory.push(analysis.rsi);
+        if (rsiHistory.length > 14) rsiHistory.shift();
+        this.rsiHistory.set(coin, rsiHistory);
+      }
+
+      // Calculate volatility metrics
+      if (candles.length >= 2) {
+        const prices = candles.map(c => c.c);
+        const returns = [];
+        for (let i = 1; i < prices.length; i++) {
+          returns.push((prices[i] - prices[i - 1]) / prices[i - 1]);
+        }
+        const volatility =
+          Math.sqrt(
+            returns.reduce((sum, r) => sum + r * r, 0) / returns.length
+          ) * Math.sqrt(24); // Annualized volatility for hourly data
+        this.volatilityMetrics.set(coin, volatility);
+      }
+
+      // Store current price
+      if (candles.length > 0) {
+        this.lastPrices.set(coin, candles[candles.length - 1].c);
+      }
+
+      // Update last analysis time
       this.lastAnalysisTime.set(coin, Date.now());
 
-      console.log(
-        `Market analysis completed for ${coin} - Sentiment: ${
-          marketCondition.sentiment
-        }, Volatility: ${marketCondition.volatility.toFixed(2)}`
-      );
+      console.log(`Analysis complete for ${coin}`);
     } catch (error) {
       console.error(`Error analyzing ${coin}:`, error);
       this.emitError(`Error analyzing ${coin}: ${error}`);
     }
   }
 
-  // Update orders based on current market conditions
+  // Update orders for all coins
   private async updateOrders(): Promise<void> {
     try {
-      const startTime = Date.now();
-
-      // Get available coins from the API to ensure we only process valid coins
-      const availableCoins = await this.hyperliquidService.getAvailableCoins();
-      const validTradingPairs = this.config.tradingPairs.filter(pair =>
-        availableCoins.includes(pair)
+      const validPairs = this.config.tradingPairs.filter(
+        pair => pair && pair.trim().length > 0
       );
 
-      // Process all trading pairs in parallel if enabled
-      if (this.config.simultaneousPairs) {
-        await Promise.all(
-          validTradingPairs.map(coin => this.updateOrdersForCoin(coin))
-        );
-      } else {
-        // Process sequentially if simultaneous processing is disabled
-        for (const coin of validTradingPairs) {
-          await this.updateOrdersForCoin(coin);
-        }
+      for (const coin of validPairs) {
+        await this.updateOrdersForCoin(coin);
       }
-
-      const executionTime = Date.now() - startTime;
-      console.log(`Orders updated in ${executionTime}ms`);
     } catch (error) {
       console.error("Error updating orders:", error);
-      this.emitError("Error updating orders");
+      this.emitError(`Error updating orders: ${error}`);
     }
   }
 
-  // Update orders for a single coin
+  // Update orders for a specific coin
   private async updateOrdersForCoin(coin: string): Promise<void> {
     try {
-      // Get current market data
-      const orderBook = await this.hyperliquidService.getOrderBook(coin);
-      if (
-        !orderBook ||
-        !orderBook.asks ||
-        !orderBook.bids ||
-        orderBook.asks.length === 0 ||
-        orderBook.bids.length === 0
-      ) {
-        console.log(`Incomplete order book data for ${coin}, skipping update`);
+      // Get current mid price
+      const midPrice = this.lastPrices.get(coin);
+      if (!midPrice || midPrice <= 0) {
+        console.log(`No valid price data for ${coin}, skipping update`);
         return;
       }
 
-      // Calculate mid price
-      const bestAsk = parseFloat(orderBook.asks[0].p);
-      const bestBid = parseFloat(orderBook.bids[0].p);
-
-      // Validate best ask and bid
-      if (isNaN(bestAsk) || isNaN(bestBid) || bestAsk <= 0 || bestBid <= 0) {
-        console.error(
-          `Invalid order book prices for ${coin}: bestAsk=${bestAsk}, bestBid=${bestBid}`
-        );
-        return;
-      }
-
-      const midPrice = (bestAsk + bestBid) / 2;
-
-      // Update last price
-      this.lastPrices.set(coin, midPrice);
-
-      // Get market condition or perform a quick analysis if needed
+      // Get market condition
       let marketCondition = this.marketConditions.get(coin);
 
       // If we don't have market condition or it's too old, perform a quick analysis
@@ -419,16 +374,16 @@ export class MarketMakerStrategy {
 
       // Get existing orders to avoid duplicates
       const openOrders = await this.hyperliquidService.getOpenOrders();
-      const existingOrders = openOrders.filter(
-        (order: any) => order.coin === coin
+      const existingOrders = (openOrders as Order[]).filter(
+        (order: Order) => order.coin === coin
       );
 
       // Count existing buy and sell orders
       const existingBuyOrders = existingOrders.filter(
-        (order: any) => order.side === "B"
+        (order: Order) => order.side === "B"
       );
       const existingSellOrders = existingOrders.filter(
-        (order: any) => order.side === "A"
+        (order: Order) => order.side === "A"
       );
 
       // Determine if we need to place new orders
@@ -525,7 +480,7 @@ export class MarketMakerStrategy {
 
           // Check if we already have an order at this price
           const hasExistingOrder = existingBuyOrders.some(
-            (order: any) =>
+            (order: Order) =>
               Math.abs(parseFloat(order.price) - price) / price < 0.001
           );
 
@@ -568,7 +523,7 @@ export class MarketMakerStrategy {
 
           // Check if we already have an order at this price
           const hasExistingOrder = existingSellOrders.some(
-            (order: any) =>
+            (order: Order) =>
               Math.abs(parseFloat(order.price) - price) / price < 0.001
           );
 
@@ -620,11 +575,7 @@ export class MarketMakerStrategy {
         }
       }
 
-      // Format price and size according to exchange requirements
-      const formattedPrice = this.hyperliquidService.formatPriceForCoin(
-        price,
-        coin
-      );
+      // Format size according to exchange requirements
       const minSize = this.hyperliquidService.getMinimumSize(coin);
       const formattedSize = Math.max(size, minSize);
 
@@ -672,7 +623,9 @@ export class MarketMakerStrategy {
 
       // Get existing orders for this coin
       const openOrders = await this.hyperliquidService.getOpenOrders();
-      const coinOrders = openOrders.filter((order: any) => order.coin === coin);
+      const coinOrders = (openOrders as Order[]).filter(
+        (order: Order) => order.coin === coin
+      );
 
       if (coinOrders.length === 0) {
         return; // No orders to cancel
@@ -686,7 +639,7 @@ export class MarketMakerStrategy {
         currentPrice * (1 - this.config.maxSpread * volatilityFactor);
 
       // Check if any orders are outside the threshold
-      const ordersToCancel = coinOrders.filter((order: any) => {
+      const ordersToCancel = coinOrders.filter((order: Order) => {
         const orderPrice = parseFloat(order.price);
         return orderPrice > upperThreshold || orderPrice < lowerThreshold;
       });
@@ -763,7 +716,10 @@ export class MarketMakerStrategy {
     try {
       // Get account information
       const accountInfo = await this.hyperliquidService.getAccountInfo();
-      const accountBalance = accountInfo.crossMarginSummary?.accountValue || 0;
+      const accountSummary = accountInfo.crossMarginSummary as
+        | { accountValue?: string }
+        | undefined;
+      const accountBalance = parseFloat(accountSummary?.accountValue || "0");
 
       if (accountBalance <= 0) {
         console.warn(
@@ -782,7 +738,7 @@ export class MarketMakerStrategy {
       const baseOrderSizeUsd = leveragedRiskAmount / this.config.orderLevels;
 
       // Convert to coin units
-      let baseOrderSize = baseOrderSizeUsd / price;
+      const baseOrderSize = baseOrderSizeUsd / price;
 
       // Ensure minimum size
       const minSize = this.hyperliquidService.getMinimumSize(coin);
@@ -801,17 +757,16 @@ export class MarketMakerStrategy {
     lastPrices: Map<string, number>;
     orderCount: number;
   } {
-    // Count total active orders
-    let orderCount = 0;
-    this.activeOrders.forEach(orders => {
-      orderCount += orders.length;
-    });
+    const orderCount = Array.from(this.orderIds.values()).reduce(
+      (total, orders) => total + orders.length,
+      0
+    );
 
     return {
       isRunning: this.isRunning,
       activePairs: this.config.tradingPairs,
-      lastPrices: this.lastPrices,
-      orderCount: orderCount,
+      lastPrices: new Map(this.lastPrices),
+      orderCount,
     };
   }
 }
