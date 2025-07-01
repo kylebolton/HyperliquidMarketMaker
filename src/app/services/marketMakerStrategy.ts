@@ -577,20 +577,20 @@ export class MarketMakerStrategy {
 
       // Format size according to exchange requirements
       const minSize = this.hyperliquidService.getMinimumSize(coin);
-      const formattedSize = Math.max(size, minSize);
+      const baseSize = Math.max(size, minSize);
 
       console.log(
         `Placing ${
           side === "B" ? "buy" : "sell"
-        } order for ${coin} at ${price} with size ${formattedSize}`
+        } order for ${coin} at ${price} with size ${baseSize}`
       );
 
-      // Place the order - FIXED: correct parameter order
+      // Place the order - service will handle price and size formatting internally
       const response = await this.hyperliquidService.placeLimitOrder(
         coin,
         side,
         price, // Pass the original price, the service will format it
-        formattedSize,
+        baseSize,
         false // Not reduce-only
       );
 

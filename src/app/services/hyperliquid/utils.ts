@@ -1,7 +1,7 @@
-// Default size decimals for common coins
+// Default size decimals for common coins (based on Hyperliquid API documentation)
 export const defaultSzDecimals: Record<string, number> = {
-  BTC: 4, // BTC sizes have 4 decimal places (e.g., 0.0001 BTC)
-  ETH: 2, // ETH sizes have 2 decimal places (e.g., 0.01 ETH)
+  BTC: 5, // BTC sizes have 5 decimal places as per API metadata
+  ETH: 4, // ETH sizes have 4 decimal places as per API metadata
   SOL: 1, // SOL sizes have 1 decimal place (e.g., 0.1 SOL)
   DOGE: 0, // DOGE sizes have 0 decimal places (e.g., 10 DOGE)
   AVAX: 1, // 0.1 AVAX

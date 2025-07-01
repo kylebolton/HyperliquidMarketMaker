@@ -82,9 +82,18 @@ export async function POST(request: Request) {
     );
 
     if (!result.success) {
+      // Check if it's a tick size or formatting error
+      const isTickSizeError =
+        result.message?.includes("tick size") ||
+        result.message?.includes("price") ||
+        result.message?.includes("divisible");
+
       return NextResponse.json(
-        { error: result.message || "Failed to place order" },
-        { status: 400 }
+        {
+          error: result.message || "Failed to place order",
+          type: isTickSizeError ? "TICK_SIZE_ERROR" : "ORDER_ERROR",
+        },
+        { status: isTickSizeError ? 422 : 400 }
       );
     }
 

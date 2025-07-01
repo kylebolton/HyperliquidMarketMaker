@@ -71,51 +71,75 @@ describe("Price Formatting Tests", () => {
     );
   });
 
-  test("BTC price formatting - already divisible by 0.1", () => {
+  test("BTC price formatting - already divisible by 0.1", async () => {
     const price = 94028.0;
-    const formattedPrice = tradingService.formatPriceForCoin(price, "BTC");
+    const formattedPrice = await tradingService.formatPriceForCoin(
+      price,
+      "BTC"
+    );
     expect(formattedPrice).toBe("94028.0");
   });
 
-  test("BTC price formatting - needs rounding up", () => {
+  test("BTC price formatting - needs rounding up", async () => {
     const price = 94028.5;
-    const formattedPrice = tradingService.formatPriceForCoin(price, "BTC");
+    const formattedPrice = await tradingService.formatPriceForCoin(
+      price,
+      "BTC"
+    );
     expect(formattedPrice).toBe("94028.5");
   });
 
-  test("BTC price formatting - needs rounding down", () => {
+  test("BTC price formatting - needs rounding down", async () => {
     const price = 94028.7;
-    const formattedPrice = tradingService.formatPriceForCoin(price, "BTC");
+    const formattedPrice = await tradingService.formatPriceForCoin(
+      price,
+      "BTC"
+    );
     expect(formattedPrice).toBe("94028.7");
   });
 
-  test("BTC price formatting - complex decimal", () => {
+  test("BTC price formatting - complex decimal", async () => {
     const price = 94028.123456;
-    const formattedPrice = tradingService.formatPriceForCoin(price, "BTC");
+    const formattedPrice = await tradingService.formatPriceForCoin(
+      price,
+      "BTC"
+    );
     expect(formattedPrice).toBe("94028.1");
   });
 
-  test("BTC price formatting - zero decimal", () => {
+  test("BTC price formatting - zero decimal", async () => {
     const price = 94028;
-    const formattedPrice = tradingService.formatPriceForCoin(price, "BTC");
+    const formattedPrice = await tradingService.formatPriceForCoin(
+      price,
+      "BTC"
+    );
     expect(formattedPrice).toBe("94028.0");
   });
 
-  test("BTC price formatting - negative price", () => {
+  test("BTC price formatting - negative price", async () => {
     const price = -94028.5;
-    const formattedPrice = tradingService.formatPriceForCoin(price, "BTC");
+    const formattedPrice = await tradingService.formatPriceForCoin(
+      price,
+      "BTC"
+    );
     expect(formattedPrice).toBe("-94028.5");
   });
 
-  test("ETH price formatting", () => {
+  test("ETH price formatting", async () => {
     const price = 1234.5678;
-    const formattedPrice = tradingService.formatPriceForCoin(price, "ETH");
+    const formattedPrice = await tradingService.formatPriceForCoin(
+      price,
+      "ETH"
+    );
     expect(formattedPrice).toBe("1234.57");
   });
 
-  test("Invalid coin price formatting", () => {
+  test("Invalid coin price formatting", async () => {
     const price = 1234.5678;
-    const formattedPrice = tradingService.formatPriceForCoin(price, "INVALID");
+    const formattedPrice = await tradingService.formatPriceForCoin(
+      price,
+      "INVALID"
+    );
     expect(formattedPrice).toBe("1234.57"); // Should use fallback formatting
   });
 });
