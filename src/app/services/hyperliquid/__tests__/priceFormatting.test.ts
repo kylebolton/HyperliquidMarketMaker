@@ -36,20 +36,28 @@ describe("Price Formatting Tests", () => {
       volumeBasedPricing: true,
       aggressiveness: 0,
       orderRefreshRate: 500,
+      enableAutomaticPricing: true,
+      enableAutomaticSizing: true,
+      useMarketIndicators: true,
+      rsiPeriod: 14,
+      emaPeriods: { short: 9, medium: 21, long: 50 },
+      volatilityWindow: 20,
+      maxPositionSize: 10,
+      simultaneousPairs: true,
     };
 
     // Create mock clients
     const mockHttpTransport = new HttpTransport();
-    const mockPublicClient = new PublicClient({ transport: mockHttpTransport });
-    const mockEventClient = new EventClient({
+    const mockInfoClient = new InfoClient({ transport: mockHttpTransport });
+    const mockSubscriptionClient = new SubscriptionClient({
       transport: new WebSocketTransport(),
     });
     const mockWsTransport = new WebSocketTransport();
 
     walletService = new WalletService(config, mockHttpTransport);
     marketDataService = new MarketDataService(
-      mockPublicClient,
-      mockEventClient,
+      mockInfoClient,
+      mockSubscriptionClient,
       mockWsTransport,
       config,
       new RateLimiter()
