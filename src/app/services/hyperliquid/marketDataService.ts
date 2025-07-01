@@ -1,6 +1,6 @@
 import {
-  PublicClient,
-  EventClient,
+  InfoClient,
+  SubscriptionClient,
   WebSocketTransport,
 } from "@nktkas/hyperliquid";
 import { Candle } from "../../utils/technicalAnalysis";
@@ -10,8 +10,8 @@ import { retryWithBackoff, getIntervalInSeconds } from "./utils";
 import { Config } from "../../config";
 
 export class MarketDataService {
-  private publicClient: PublicClient;
-  private eventClient: EventClient;
+  private infoClient: InfoClient;
+  private subscriptionClient: SubscriptionClient;
   private wsTransport: WebSocketTransport;
   private config: Config;
   private rateLimiter: RateLimiter;
