@@ -536,31 +536,35 @@ export function determineOptimalPriceLevels(
   }
 
   // Adjust prices based on support and resistance levels
-  if (marketCondition.supportResistance.nearestSupport !== null) {
+  if (marketCondition.supportResistance?.nearestSupport !== null && marketCondition.supportResistance?.nearestSupport !== undefined) {
     // Adjust buy prices to cluster near support levels
     for (let i = 0; i < buyPrices.length; i++) {
       const support = marketCondition.supportResistance.nearestSupport;
-      const distanceToSupport = Math.abs(buyPrices[i] - support) / support;
+      if (support !== null && support !== undefined) {
+        const distanceToSupport = Math.abs(buyPrices[i] - support) / support;
 
-      // If price is close to support, adjust it towards support
-      if (distanceToSupport < 0.03) {
-        // Weight between original price and support level
-        buyPrices[i] = buyPrices[i] * 0.7 + support * 0.3;
+        // If price is close to support, adjust it towards support
+        if (distanceToSupport < 0.03) {
+          // Weight between original price and support level
+          buyPrices[i] = buyPrices[i] * 0.7 + support * 0.3;
+        }
       }
     }
   }
 
-  if (marketCondition.supportResistance.nearestResistance !== null) {
+  if (marketCondition.supportResistance?.nearestResistance !== null && marketCondition.supportResistance?.nearestResistance !== undefined) {
     // Adjust sell prices to cluster near resistance levels
     for (let i = 0; i < sellPrices.length; i++) {
       const resistance = marketCondition.supportResistance.nearestResistance;
-      const distanceToResistance =
-        Math.abs(sellPrices[i] - resistance) / resistance;
+      if (resistance !== null && resistance !== undefined) {
+        const distanceToResistance =
+          Math.abs(sellPrices[i] - resistance) / resistance;
 
-      // If price is close to resistance, adjust it towards resistance
-      if (distanceToResistance < 0.03) {
-        // Weight between original price and resistance level
-        sellPrices[i] = sellPrices[i] * 0.7 + resistance * 0.3;
+        // If price is close to resistance, adjust it towards resistance
+        if (distanceToResistance < 0.03) {
+          // Weight between original price and resistance level
+          sellPrices[i] = sellPrices[i] * 0.7 + resistance * 0.3;
+        }
       }
     }
   }

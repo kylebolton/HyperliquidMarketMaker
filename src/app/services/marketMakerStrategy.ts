@@ -190,15 +190,6 @@ export class MarketMakerStrategy {
         this.orderRefreshIntervalId = null;
       }
 
-      // Cancel all active orders if the method exists
-      if (typeof this.hyperliquidService.cancelAllOrders === "function") {
-        for (const coin of this.config.tradingPairs) {
-          await this.hyperliquidService.cancelAllOrders(coin);
-        }
-      } else {
-        console.log("Cancel all orders method not available");
-      }
-
       // Close WebSocket connections if the method exists
       if (typeof this.hyperliquidService.closeWebSockets === "function") {
         await this.hyperliquidService.closeWebSockets();
@@ -324,15 +315,57 @@ export class MarketMakerStrategy {
     }
   }
 
-  // Update orders for all coins
+  // Update orders for all coins using batch processing
   private async updateOrders(): Promise<void> {
     try {
       const validPairs = this.config.tradingPairs.filter(
         pair => pair && pair.trim().length > 0
       );
+      
+      // Collect all orders to be placed across all coins
+      const allOrdersToPlace: Array<{
+        coin: string;
+        side: "B" | "A";
+        price: number;
+        size: number;
+        reduceOnly?: boolean;
+      }> = [];
 
+      // Process each coin and collect orders
       for (const coin of validPairs) {
-        await this.updateOrdersForCoin(coin);
+        const ordersForCoin = await this.collectOrdersForCoin(coin);
+        allOrdersToPlace.push(...ordersForCoin);
+      }
+
+      // Place all orders in a single batch if any exist
+      if (allOrdersToPlace.length > 0) {
+        console.log(`Placing batch of ${allOrdersToPlace.length} orders across ${validPairs.length} coins`);
+        
+        // Check if batch method exists, fallback to individual orders if not
+        if (typeof this.hyperliquidService.placeBatchLimitOrders === "function") {
+          const batchResult = await this.hyperliquidService.placeBatchLimitOrders(allOrdersToPlace);
+          
+          if (batchResult.success) {
+            console.log(`Successfully placed ${batchResult.processedOrders} orders in batch`);
+          } else {
+            console.error("Batch order placement failed:", batchResult.message);
+            this.emitError(`Batch order placement failed: ${batchResult.message}`);
+          }
+        } else {
+          console.log("Batch order method not available, placing orders individually");
+          // Fallback to individual order placement
+          for (const order of allOrdersToPlace) {
+            await this.hyperliquidService.placeLimitOrder(
+              order.coin,
+              order.side,
+              order.price,
+              order.size,
+              order.reduceOnly || false
+            );
+          }
+        }
+      } else {
+        console.log("No new orders to place");
       }
     } catch (error) {
       console.error("Error updating orders:", error);
@@ -538,6 +571,164 @@ export class MarketMakerStrategy {
     } catch (error) {
       console.error(`Error updating orders for ${coin}:`, error);
       this.emitError(`Failed to update orders for ${coin}: ${error}`);
+    }
+  }
+
+  // Collect orders that need to be placed for a specific coin (without placing them)
+  private async collectOrdersForCoin(coin: string): Promise<Array<{
+    coin: string;
+    side: "B" | "A";
+    price: number;
+    size: number;
+    reduceOnly?: boolean;
+  }>> {
+    const ordersToPlace: Array<{
+      coin: string;
+      side: "B" | "A";
+      price: number;
+      size: number;
+      reduceOnly?: boolean;
+    }> = [];
+
+    try {
+      // Get current mid price
+      const midPrice = this.lastPrices.get(coin);
+      if (!midPrice || midPrice <= 0) {
+        console.log(`No valid price data for ${coin}, skipping collection`);
+        return ordersToPlace;
+      }
+
+      // Get market condition
+      let marketCondition = this.marketConditions.get(coin);
+      
+      // If we don't have market condition or it's too old, perform a quick analysis
+      const now = Date.now();
+      const lastAnalysisTime = this.lastAnalysisTime.get(coin) || 0;
+      const analysisAge = now - lastAnalysisTime;
+      const maxAnalysisAge = this.config.updateInterval * 5; // 5x update interval
+      
+      if (!marketCondition || analysisAge > maxAnalysisAge) {
+        await this.analyzeCoin(coin);
+        marketCondition = this.marketConditions.get(coin);
+        if (!marketCondition) {
+          console.log(`No market condition data for ${coin}, skipping collection`);
+          return ordersToPlace;
+        }
+      }
+
+      // Cancel existing orders if needed
+      await this.cancelExistingOrdersIfNeeded(coin, midPrice);
+
+      // Get existing orders to avoid duplicates
+      const openOrders = await this.hyperliquidService.getOpenOrders();
+      const existingOrders = (openOrders as Order[]).filter(
+        (order: Order) => order.coin === coin
+      );
+
+      // Count existing buy and sell orders
+      const existingBuyOrders = existingOrders.filter(
+        (order: Order) => order.side === "B"
+      );
+      const existingSellOrders = existingOrders.filter(
+        (order: Order) => order.side === "A"
+      );
+
+      // Determine if we need to place new orders
+      const targetOrdersPerSide = this.config.orderLevels;
+      const needsNewBuyOrders = existingBuyOrders.length < targetOrdersPerSide;
+      const needsNewSellOrders = existingSellOrders.length < targetOrdersPerSide;
+
+      if (!needsNewBuyOrders && !needsNewSellOrders) {
+        console.log(`${coin}: Already has sufficient orders on both sides`);
+        return ordersToPlace;
+      }
+
+      // Calculate dynamic spread and optimal pricing
+      const dynamicSpread = this.calculateDynamicSpread(coin, marketCondition);
+      const priceLevels = determineOptimalPriceLevels(
+        midPrice,
+        marketCondition,
+        dynamicSpread,
+        this.config.orderLevels,
+        this.config.orderSpacing || 0.002
+      );
+
+      // Calculate optimal order sizes
+      const orderSizes = determineOptimalOrderSizes(
+        this.config.tradingAmount / midPrice, // Convert USD to base size
+        marketCondition,
+        this.config.orderLevels,
+        this.config.maxPositionSize
+      );
+
+      // Collect buy orders
+      if (needsNewBuyOrders) {
+        for (let i = 0; i < priceLevels.buyPrices.length; i++) {
+          const price = priceLevels.buyPrices[i];
+          const size = orderSizes.buySizes[i] || orderSizes.buySizes[0];
+
+          // Check if we already have an order at or near this price level
+          const hasExistingOrder = existingBuyOrders.some((order: Order) => {
+            const orderPrice = parseFloat(order.price);
+            const priceDiff = Math.abs(orderPrice - price) / price;
+            return priceDiff < 0.001; // Within 0.1% of target price
+          });
+
+          if (!hasExistingOrder) {
+            // Validate before adding to batch
+            if (price > 0 && size > 0) {
+              const minSize = this.hyperliquidService.getMinimumSize(coin);
+              const finalSize = Math.max(size, minSize);
+              
+              ordersToPlace.push({
+                coin,
+                side: "B",
+                price,
+                size: finalSize,
+                reduceOnly: false
+              });
+            }
+          }
+        }
+      }
+
+      // Collect sell orders
+      if (needsNewSellOrders) {
+        for (let i = 0; i < priceLevels.sellPrices.length; i++) {
+          const price = priceLevels.sellPrices[i];
+          const size = orderSizes.sellSizes[i] || orderSizes.sellSizes[0];
+
+          // Check if we already have an order at or near this price level
+          const hasExistingOrder = existingSellOrders.some((order: Order) => {
+            const orderPrice = parseFloat(order.price);
+            const priceDiff = Math.abs(orderPrice - price) / price;
+            return priceDiff < 0.001; // Within 0.1% of target price
+          });
+
+          if (!hasExistingOrder) {
+            // Validate before adding to batch
+            if (price > 0 && size > 0) {
+              const minSize = this.hyperliquidService.getMinimumSize(coin);
+              const finalSize = Math.max(size, minSize);
+              
+              ordersToPlace.push({
+                coin,
+                side: "A",
+                price,
+                size: finalSize,
+                reduceOnly: false
+              });
+            }
+          }
+        }
+      }
+
+      console.log(`${coin}: Collected ${ordersToPlace.length} orders to place`);
+      return ordersToPlace;
+    } catch (error) {
+      console.error(`Error collecting orders for ${coin}:`, error);
+      this.emitError(`Error collecting orders for ${coin}: ${error}`);
+      return ordersToPlace;
     }
   }
 

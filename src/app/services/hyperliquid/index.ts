@@ -160,6 +160,16 @@ export class HyperliquidService {
       }
 
       if (this.walletConnectionState?.isConnected) {
+        // Check if wallet is already initialized for this address
+        const currentWalletStatus = this.walletService.checkExchangeStatus();
+        if (currentWalletStatus.ready) {
+          const currentWalletClient = this.walletService.getViemWalletClient();
+          if (currentWalletClient?.account?.address === this.walletConnectionState.address) {
+            console.log("Wallet already initialized for address:", this.walletConnectionState.address);
+            return;
+          }
+        }
+
         // Update config with wallet address from connected wallet
         if (this.walletConnectionState.address && !this.config.walletAddress) {
           const updatedConfig = {
@@ -236,6 +246,28 @@ export class HyperliquidService {
       price,
       reduceOnly
     );
+  }
+
+  /**
+   * Place multiple limit orders in a single transaction (batch order)
+   * This avoids multiple wallet signing popups
+   */
+  async placeBatchLimitOrders(
+    orders: Array<{
+      coin: string;
+      side: "B" | "A";
+      price: number;
+      size: number;
+      reduceOnly?: boolean;
+    }>
+  ): Promise<{
+    success: boolean;
+    message?: string;
+    data?: unknown;
+    totalFeeAmount?: number;
+    processedOrders?: number;
+  }> {
+    return this.tradingService.placeBatchLimitOrders(orders);
   }
 
   /**

@@ -67,6 +67,7 @@ export function MarketMaker({
   const [orders, setOrders] = useState<Order[]>([]);
   const [errors, setErrors] = useState<ErrorMessage[]>([]);
   const [marketPrice, setMarketPrice] = useState<number | null>(null);
+  const [marketMakerStrategy, setMarketMakerStrategy] = useState<MarketMakerStrategy | null>(null);
   const [selectedCoin, setSelectedCoin] = useState<string>("");
   const [accountInfo, setAccountInfo] = useState<AccountInfo | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
@@ -490,45 +491,65 @@ export function MarketMaker({
         return;
       }
 
-      // Initialize wallet with the current connection state
-      try {
-        await hyperliquidService.initializeWallet(walletConnectionState);
-      } catch (walletError) {
-        handleError(
-          "Failed to initialize wallet",
-          walletError,
-          "critical"
-        );
-        setIsLoading(false);
-        return;
+      // Check if wallet is already initialized and ready
+      let walletStatus = hyperliquidService.checkWalletStatus();
+      console.log("Current wallet status:", walletStatus);
+      
+      // Only initialize wallet if it's not ready yet
+      if (!walletStatus.ready) {
+        console.log("Wallet not ready, initializing...");
+        try {
+          // Pass the current wallet connection state to avoid re-prompting
+          await hyperliquidService.initializeWallet(walletConnectionState);
+        } catch (walletError) {
+          handleError(
+            "Failed to initialize wallet",
+            walletError,
+            "critical"
+          );
+          setIsLoading(false);
+          return;
+        }
+
+        // Re-check wallet status after initialization
+        walletStatus = hyperliquidService.checkWalletStatus();
+        if (!walletStatus.ready) {
+          handleError(
+            "Wallet is not initialized",
+            new Error(walletStatus.message || "Unknown error"),
+            "critical"
+          );
+          setIsLoading(false);
+          return;
+        }
+      } else {
+        console.log("Wallet is already initialized and ready, skipping re-initialization");
       }
 
-      // Check wallet status after initialization
-      const walletStatus = hyperliquidService.checkWalletStatus();
-      if (!walletStatus.ready) {
-        handleError(
-          "Wallet is not initialized",
-          new Error(walletStatus.message || "Unknown error"),
-          "critical"
-        );
-        setIsLoading(false);
-        return;
+      // Stop any existing strategy before starting a new one
+      if (marketMakerStrategy) {
+        console.log("Stopping existing market maker strategy...");
+        await marketMakerStrategy.stop();
+        setMarketMakerStrategy(null);
       }
 
       // Create a new market maker strategy
-      const marketMakerStrategy = new MarketMakerStrategy(
+      const strategy = new MarketMakerStrategy(
         hyperliquidService,
         config
       );
 
+      // Store the strategy instance in state
+      setMarketMakerStrategy(strategy);
+
       // Register event listeners
-      marketMakerStrategy.on("error", (...args: unknown[]) => {
+      strategy.on("error", (...args: unknown[]) => {
         const errorMessage = args[0] as string;
         handleError("Market maker error", errorMessage, "warning");
       });
 
       // Start the market maker
-      await marketMakerStrategy.start();
+      await strategy.start();
 
       // Set up data refresh interval
       const refreshInterval = setInterval(async () => {
@@ -582,27 +603,42 @@ export function MarketMaker({
   // Stop the market maker
   const stopMarketMaker = async () => {
     try {
-      setIsRunning(false);
+      setIsLoading(true);
+      console.log("Stopping market maker...");
+
+      // Stop the market maker strategy first
+      if (marketMakerStrategy) {
+        console.log("Stopping market maker strategy...");
+        await marketMakerStrategy.stop();
+        setMarketMakerStrategy(null);
+        console.log("Market maker strategy stopped successfully");
+      }
 
       // Clear intervals
       if (dataRefreshInterval) {
         clearInterval(dataRefreshInterval);
         setDataRefreshInterval(null);
+        console.log("Data refresh interval cleared");
       }
 
       if (statusIntervalId) {
         clearInterval(statusIntervalId);
         setStatusIntervalId(null);
+        console.log("Status interval cleared");
       }
 
-      // Cancel all orders
-      if (hyperliquidService) {
-        await cancelAllOrders();
-      }
+      // Set running state to false
+      setIsRunning(false);
+      console.log("Market maker stopped successfully");
 
-      handleError("Market maker stopped successfully", null, "info");
+      handleError("Market maker stopped - existing orders remain active", null, "info");
     } catch (error) {
+      console.error("Error stopping market maker:", error);
       handleError("Error stopping market maker", error, "warning");
+      // Still set running to false even if there was an error
+      setIsRunning(false);
+    } finally {
+      setIsLoading(false);
     }
   };
 

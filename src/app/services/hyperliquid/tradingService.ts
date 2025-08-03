@@ -4,6 +4,7 @@ import { retryWithBackoff } from "./utils";
 import { Config } from "../../config";
 import { WalletService } from "./walletService";
 import { MarketDataService } from "./marketDataService";
+import type { TIF } from "@nktkas/hyperliquid";
 
 // Define interfaces for position data
 interface PositionData {
@@ -70,6 +71,7 @@ export class TradingService {
 
   // Metadata caching
   private assetMetadataCache: Map<string, AssetMetadata> = new Map();
+  private assetIndexMap: Map<string, number> = new Map(); // coin name -> index
   private lastMetadataFetch: number = 0;
   private metadataMaxAge: number = 300000; // 5 minutes
 
@@ -108,13 +110,15 @@ export class TradingService {
       }
 
       console.log("Refreshing asset metadata...");
-      const metadata = await this.marketDataService.getMetadata();
+      const metadataResponse = await this.marketDataService.getMetadata();
 
-      if (metadata && metadata.universe) {
+      if (metadataResponse && metadataResponse.universe) {
         this.assetMetadataCache.clear();
-        metadata.universe.forEach((asset: AssetMetadata) => {
+        this.assetIndexMap.clear();
+        metadataResponse.universe.forEach((asset: AssetMetadata, index: number) => {
           if (asset.name) {
             this.assetMetadataCache.set(asset.name, asset);
+            this.assetIndexMap.set(asset.name, index);
           }
         });
         this.lastMetadataFetch = now;
@@ -141,32 +145,47 @@ export class TradingService {
 
   /**
    * Get proper tick size based on asset metadata
+   * For Hyperliquid, the tick size for prices is typically based on the asset's price level
    */
   private async getTickSize(coin: string): Promise<number> {
-    const metadata = await this.getAssetMetadata(coin);
+    // Get metadata for future use
+    await this.getAssetMetadata(coin);
 
-    if (metadata && metadata.szDecimals !== undefined) {
-      // For Hyperliquid, tick size is typically 1 / (10^szDecimals)
-      // But for price, we need to be more conservative
-      if (metadata.szDecimals === 5) {
-        // BTC case - use 0.1 tick size for prices
-        return 0.1;
-      } else if (metadata.szDecimals === 4) {
-        // ETH case - use 0.01 tick size for prices
-        return 0.01;
-      } else if (metadata.szDecimals === 0) {
-        // Whole number coins - use 1.0 tick size
-        return 1.0;
-      } else {
-        // For other cases, use 0.01 as default
-        return 0.01;
+    // Get current market price to determine appropriate tick size
+    try {
+      const orderBook = await this.marketDataService.getOrderBook(coin);
+      if (orderBook && orderBook.asks && orderBook.bids && 
+          orderBook.asks.length > 0 && orderBook.bids.length > 0) {
+        const bestAsk = parseFloat(orderBook.asks[0].p);
+        const bestBid = parseFloat(orderBook.bids[0].p);
+        const midPrice = (bestAsk + bestBid) / 2;
+        
+        // Determine tick size based on price level (Hyperliquid standard)
+        if (midPrice >= 10000) {
+          return 1.0;    // Above $10k: $1 tick
+        } else if (midPrice >= 1000) {
+          return 0.1;    // $1k-$10k: $0.10 tick
+        } else if (midPrice >= 100) {
+          return 0.01;   // $100-$1k: $0.01 tick
+        } else if (midPrice >= 10) {
+          return 0.001;  // $10-$100: $0.001 tick
+        } else if (midPrice >= 1) {
+          return 0.0001; // $1-$10: $0.0001 tick
+        } else {
+          return 0.00001; // Below $1: $0.00001 tick
+        }
       }
+    } catch (error) {
+      console.warn(`Could not get market price for ${coin} tick size:`, error);
     }
 
-    // Fallback to defaults if metadata not available
-    if (coin === "BTC") return 0.1;
-    if (coin === "ETH") return 0.01;
-    return 0.01;
+    // Fallback based on typical asset prices if market data unavailable
+    if (coin === "BTC") return 0.1;   // BTC typically ~$50k
+    if (coin === "ETH") return 0.01;  // ETH typically ~$3k
+    if (coin === "SOL") return 0.001; // SOL typically ~$100
+    if (coin === "DOGE" || coin === "XRP" || coin === "ADA") return 0.00001; // Low price coins
+    
+    return 0.01; // Safe default for mid-range assets
   }
 
   /**
@@ -197,13 +216,17 @@ export class TradingService {
 
     if (metadata && metadata.szDecimals !== undefined) {
       if (isSize) {
+        // Size decimal places come directly from metadata
         return metadata.szDecimals;
       } else {
-        // For prices, use fewer decimal places
-        if (metadata.szDecimals === 5) return 1; // BTC
-        if (metadata.szDecimals === 4) return 2; // ETH
-        if (metadata.szDecimals === 0) return 0; // Whole number coins
-        return 2; // Default
+        // For prices, determine based on tick size
+        const tickSize = await this.getTickSize(coin);
+        if (tickSize >= 1) return 0;
+        if (tickSize >= 0.1) return 1;
+        if (tickSize >= 0.01) return 2;
+        if (tickSize >= 0.001) return 3;
+        if (tickSize >= 0.0001) return 4;
+        return 5; // For very small tick sizes
       }
     }
 
@@ -211,10 +234,14 @@ export class TradingService {
     if (isSize) {
       if (coin === "BTC") return 5;
       if (coin === "ETH") return 4;
+      if (coin === "SOL") return 2;
+      if (coin === "DOGE" || coin === "XRP" || coin === "ADA") return 0;
       return 2;
     } else {
       if (coin === "BTC") return 1;
       if (coin === "ETH") return 2;
+      if (coin === "SOL") return 3;
+      if (coin === "DOGE" || coin === "XRP" || coin === "ADA") return 5;
       return 2;
     }
   }
@@ -252,6 +279,138 @@ export class TradingService {
       console.error("Error processing trading fee:", error);
       // Don't throw here to avoid failing the main trade
     }
+  }
+
+  /**
+   * Place multiple limit orders in a single transaction (batch order)
+   * This avoids multiple wallet signing popups
+   */
+  async placeBatchLimitOrders(
+    orders: Array<{
+      coin: string;
+      side: "B" | "A";
+      price: number;
+      size: number;
+      reduceOnly?: boolean;
+    }>
+  ): Promise<{
+    success: boolean;
+    message?: string;
+    data?: unknown;
+    totalFeeAmount?: number;
+    processedOrders?: number;
+  }> {
+    if (!orders || orders.length === 0) {
+      return {
+        success: false,
+        message: "No orders provided",
+      };
+    }
+
+    // Validate all orders first
+    for (const order of orders) {
+      if (
+        !order.coin ||
+        !order.side ||
+        typeof order.price !== "number" ||
+        typeof order.size !== "number" ||
+        order.price <= 0 ||
+        order.size <= 0
+      ) {
+        return {
+          success: false,
+          message: `Invalid order parameters for ${order.coin}`,
+        };
+      }
+    }
+
+    return this.rateLimiter.enqueueOrder(async () => {
+      try {
+        const exchangeClient = this.walletService.getExchangeClient();
+        if (!exchangeClient) {
+          return {
+            success: false,
+            message: "Exchange client not initialized",
+          };
+        }
+
+        // Prepare batch orders
+        const batchOrders = [];
+        let totalFeeAmount = 0;
+
+        for (const order of orders) {
+          // Get asset ID for the coin
+          const assetId = await this.getAssetIdForCoin(order.coin);
+          if (assetId === -1) {
+            return {
+              success: false,
+              message: `Invalid coin: ${order.coin}`,
+            };
+          }
+
+          // Format price and size
+          const formattedPrice = await this.formatPriceForCoin(order.price, order.coin);
+          const formattedSize = await this.formatSizeForCoin(order.size, order.coin);
+
+          if (!formattedPrice || !formattedSize) {
+            return {
+              success: false,
+              message: `Failed to format order parameters for ${order.coin}`,
+            };
+          }
+
+          // Calculate fee for this order
+          const feeAmount = this.calculateTradingFee(order.price, order.size);
+          totalFeeAmount += feeAmount;
+
+          // Add to batch
+          batchOrders.push({
+            a: assetId,
+            b: order.side === "B",
+            p: formattedPrice,
+            s: formattedSize,
+            r: order.reduceOnly || false,
+            t: {
+              limit: {
+                tif: "Gtc" as TIF,
+              },
+            },
+          });
+
+          console.log(`Prepared batch order: ${order.coin} ${order.side} ${formattedPrice} x ${formattedSize}`);
+        }
+
+        console.log(`Placing batch of ${batchOrders.length} orders`);
+
+        // Place all orders in a single transaction
+        const result = await exchangeClient.order({
+          orders: batchOrders,
+          grouping: "na",
+        });
+
+        // Process trading fees for all orders
+        for (const order of orders) {
+          const feeAmount = this.calculateTradingFee(order.price, order.size);
+          await this.processTradingFee(feeAmount, order.coin);
+        }
+
+        return {
+          success: true,
+          message: `Batch of ${batchOrders.length} orders placed successfully`,
+          data: result,
+          totalFeeAmount,
+          processedOrders: batchOrders.length,
+        };
+      } catch (error: unknown) {
+        const errorMessage = (error as Error)?.message || String(error);
+        console.error("Error placing batch orders:", errorMessage);
+
+        return {
+          success: false,
+          message: `Failed to place batch orders: ${errorMessage}`,
+        };
+      }
+    });
   }
 
   /**
@@ -383,7 +542,7 @@ export class TradingService {
         }
 
         // Get asset ID for the coin
-        const assetId = this.getAssetIdForCoin(coin);
+        const assetId = await this.getAssetIdForCoin(coin);
         if (assetId === -1) {
           return {
             success: false,
@@ -414,7 +573,7 @@ export class TradingService {
                 r: reduceOnly,
                 t: {
                   limit: {
-                    tif: "Gtc",
+                    tif: "Gtc" as TIF,
                   },
                 },
               },
@@ -459,7 +618,7 @@ export class TradingService {
                     r: reduceOnly,
                     t: {
                       limit: {
-                        tif: "Gtc",
+                        tif: "Gtc" as TIF,
                       },
                     },
                   },
@@ -509,7 +668,7 @@ export class TradingService {
                     r: reduceOnly,
                     t: {
                       limit: {
-                        tif: "Gtc",
+                        tif: "Gtc" as TIF,
                       },
                     },
                   },
@@ -895,7 +1054,7 @@ export class TradingService {
       }
 
       // Get the asset ID for the coin
-      const assetId = await this.marketDataService.getAssetIdByCoin(coin);
+      const assetId = await this.getAssetIdForCoin(coin);
 
       // Validate the asset ID
       if (assetId === undefined || assetId === null || assetId < 0) {
@@ -911,7 +1070,23 @@ export class TradingService {
           `Attempting to cancel all orders for ${coin} (asset ID: ${assetId})`
         );
 
-        // Use the new ExchangeClient cancel method
+        // First, get all open orders for this asset
+        const openOrders = await this.getOpenOrders();
+        const ordersForAsset = openOrders.filter((order: any) => {
+          return order.coin === coin || (order.a !== undefined && order.a === assetId);
+        });
+
+        if (ordersForAsset.length === 0) {
+          console.log(`No open orders found for ${coin} (asset ID: ${assetId})`);
+          return {
+            success: true,
+            message: `No active orders to cancel for ${coin}`,
+          };
+        }
+
+        console.log(`Found ${ordersForAsset.length} orders to cancel for ${coin}`);
+
+        // Cancel all orders by using o: 0 (cancel all) or specific order IDs
         const response = await exchangeClient.cancel({
           cancels: [{ a: assetId, o: 0 }],
         });
@@ -933,7 +1108,8 @@ export class TradingService {
         if (
           errorMessage.includes("already canceled") ||
           errorMessage.includes("never placed") ||
-          errorMessage.includes("Order was never placed")
+          errorMessage.includes("Order was never placed") ||
+          errorMessage.includes("or filled")
         ) {
           console.log(
             `No active orders to cancel for ${coin} (asset ID: ${assetId})`
@@ -1076,19 +1252,35 @@ export class TradingService {
       const tickSize = await this.getTickSize(coin);
       const decimalPlaces = await this.getDecimalPlaces(coin, false);
 
-      // Round to nearest tick
+      // Ensure price is positive
+      if (price <= 0) {
+        throw new Error(`Invalid price: ${price}`);
+      }
+
+      // Round to nearest tick (crucial for Hyperliquid)
       const tickCount = Math.round(price / tickSize);
       const roundedPrice = tickCount * tickSize;
 
-      // Format with proper decimal places
-      const formatted = roundedPrice.toFixed(decimalPlaces);
+      // Format with exact decimal places (no trailing zero removal for consistency)
+      let formatted = roundedPrice.toFixed(decimalPlaces);
 
-      // Remove trailing zeros but keep at least one decimal place for BTC
-      if (coin === "BTC" && !formatted.includes(".")) {
-        return formatted + ".0";
+      // Validate the result
+      const numFormatted = Number(formatted);
+      if (isNaN(numFormatted) || numFormatted <= 0) {
+        throw new Error(`Invalid formatted price: ${formatted}`);
       }
 
-      return formatted.replace(/\.?0+$/, "") || formatted;
+      // Ensure price is divisible by tick size (double-check)
+      const remainder = numFormatted % tickSize;
+      if (Math.abs(remainder) > tickSize * 0.0001) { // Allow tiny floating point errors
+        console.warn(`Price ${formatted} may not be exactly divisible by tick size ${tickSize}, remainder: ${remainder}`);
+        // Re-round more strictly
+        const strictTickCount = Math.round(numFormatted / tickSize);
+        formatted = (strictTickCount * tickSize).toFixed(decimalPlaces);
+      }
+
+      console.log(`Formatted price for ${coin}: ${price} -> ${formatted} (tick: ${tickSize}, decimals: ${decimalPlaces})`);
+      return formatted;
     } catch (error) {
       console.error(`Error formatting price for ${coin}:`, error);
       return "";
@@ -1103,19 +1295,47 @@ export class TradingService {
       const sizeStep = await this.getSizeStep(coin);
       const decimalPlaces = await this.getDecimalPlaces(coin, true);
 
-      // Round to nearest step
-      const stepCount = Math.round(size / sizeStep);
-      const roundedSize = stepCount * sizeStep;
-
-      // Format with proper decimal places
-      const formatted = roundedSize.toFixed(decimalPlaces);
-
-      // Validate the formatted size
-      if (isNaN(Number(formatted)) || Number(formatted) <= 0) {
-        console.error(`Invalid size for ${coin}: ${formatted}`);
-        return "";
+      // Ensure size is positive
+      if (size <= 0) {
+        throw new Error(`Invalid size: ${size}`);
       }
 
+      // Round to nearest step (crucial for Hyperliquid size requirements)
+      const stepCount = Math.round(size / sizeStep);
+      let roundedSize = stepCount * sizeStep;
+
+      // Ensure minimum size
+      if (roundedSize < sizeStep) {
+        roundedSize = sizeStep;
+      }
+
+      // Format with exact decimal places
+      let formatted = roundedSize.toFixed(decimalPlaces);
+
+      // Validate the result
+      const numFormatted = Number(formatted);
+      if (isNaN(numFormatted) || numFormatted <= 0) {
+        throw new Error(`Invalid formatted size: ${formatted}`);
+      }
+
+      // Ensure size is divisible by size step (double-check)
+      const remainder = numFormatted % sizeStep;
+      if (Math.abs(remainder) > sizeStep * 0.0001) { // Allow tiny floating point errors
+        console.warn(`Size ${formatted} may not be exactly divisible by size step ${sizeStep}, remainder: ${remainder}`);
+        // Re-round more strictly
+        const strictStepCount = Math.round(numFormatted / sizeStep);
+        formatted = (strictStepCount * sizeStep).toFixed(decimalPlaces);
+      }
+
+      // Remove unnecessary trailing zeros for cleaner formatting
+      formatted = formatted.replace(/\.?0+$/, "");
+      
+      // But ensure we don't have an empty string
+      if (!formatted || formatted === "0") {
+        formatted = sizeStep.toFixed(decimalPlaces).replace(/\.?0+$/, "");
+      }
+
+      console.log(`Formatted size for ${coin}: ${size} -> ${formatted} (step: ${sizeStep}, decimals: ${decimalPlaces})`);
       return formatted;
     } catch (error) {
       console.error(`Error formatting size for ${coin}:`, error);
@@ -1136,71 +1356,62 @@ export class TradingService {
   }
 
   /**
-   * Get the asset ID for a given coin
+   * Get the asset ID for a given coin using dynamic metadata
    */
-  private getAssetIdForCoin(coin: string): number {
-    // In Hyperliquid, BTC is asset ID 0
-    if (coin === "BTC") return 0;
+  private async getAssetIdForCoin(coin: string): Promise<number> {
+    // Ensure metadata is fresh
+    if (Date.now() - this.lastMetadataFetch > this.metadataMaxAge) {
+      await this.refreshAssetMetadata();
+    }
 
-    // ETH is asset ID 1
-    if (coin === "ETH") return 1;
+    // Check cached index map first
+    const cachedIndex = this.assetIndexMap.get(coin);
+    if (cachedIndex !== undefined) {
+      return cachedIndex;
+    }
 
-    // For other coins, we would need to look up the asset ID from metadata
-    // This is a simplified implementation
-    const coinToAssetId: Record<string, number> = {
+    // Try to refresh metadata and find the asset
+    try {
+      await this.refreshAssetMetadata();
+      const refreshedIndex = this.assetIndexMap.get(coin);
+      if (refreshedIndex !== undefined) {
+        return refreshedIndex;
+      }
+    } catch (error) {
+      console.error(`Error fetching asset ID for ${coin}:`, error);
+    }
+
+    // Fallback to known asset indices based on the actual Hyperliquid metadata structure
+    const fallbackMapping: Record<string, number> = {
       BTC: 0,
       ETH: 1,
-      SOL: 2,
-      ARB: 3,
-      LINK: 4,
-      MATIC: 5,
-      DOGE: 6,
+      ATOM: 2,
+      MATIC: 3,
+      DYDX: 4,
+      SOL: 5,
+      AVAX: 6,
       BNB: 7,
-      ADA: 8,
-      XRP: 9,
-      AVAX: 10,
-      OP: 11,
-      ATOM: 12,
-      LTC: 13,
-      DOT: 14,
-      NEAR: 15,
-      TRX: 16,
-      UNI: 17,
-      AAVE: 18,
-      SHIB: 19,
-      APE: 20,
-      FIL: 21,
-      PEPE: 22,
-      SUI: 23,
-      BLUR: 24,
-      BONK: 25,
-      INJ: 26,
-      DYDX: 27,
-      APT: 28,
-      SEI: 29,
-      JTO: 30,
-      STRK: 31,
-      JUP: 32,
-      PYTH: 33,
-      MEME: 34,
-      TIA: 35,
-      WIF: 36,
-      RNDR: 37,
-      ORDI: 38,
-      PENDLE: 39,
-      RUNE: 40,
-      ETHFI: 41,
-      CYBER: 42,
-      METIS: 43,
-      MANTA: 44,
-      BEAMX: 45,
-      WSTETH: 46,
-      ETHENA: 47,
-      USDC: 48,
-      USDT: 49,
-      DAI: 50,
+      APE: 8,
+      OP: 9,
+      LTC: 10,
+      ARB: 11,
+      DOGE: 12,
+      INJ: 13,
+      SUI: 14,
+      kPEPE: 15,
+      CRV: 16,
+      LDO: 17,
+      LINK: 18,
+      STX: 19,
     };
 
-    return coinToAssetId[coin] || -1;
+    const fallbackId = fallbackMapping[coin];
+    if (fallbackId !== undefined) {
+      console.warn(`Using fallback asset ID ${fallbackId} for ${coin}`);
+      return fallbackId;
+    }
+
+    console.error(`Asset ID not found for ${coin}`);
+    return -1;
   }
 }
