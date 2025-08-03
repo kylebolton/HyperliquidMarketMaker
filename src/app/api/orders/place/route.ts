@@ -33,9 +33,9 @@ export async function POST(request: Request) {
     }
 
     // Validate config
-    if (!config.apiSecret) {
+    if (!config.privateKey) {
       return NextResponse.json(
-        { error: "API secret is required to place orders" },
+        { error: "Private key is required to place orders" },
         { status: 400 }
       );
     }

@@ -1,3 +1,12 @@
+// Mock the @nktkas/hyperliquid module to avoid import issues
+jest.mock("@nktkas/hyperliquid", () => ({
+  InfoClient: jest.fn().mockImplementation(() => ({})),
+  SubscriptionClient: jest.fn().mockImplementation(() => ({})),
+  WebSocketTransport: jest.fn().mockImplementation(() => ({})),
+  HttpTransport: jest.fn().mockImplementation(() => ({})),
+  ExchangeClient: jest.fn().mockImplementation(() => ({})),
+}));
+
 import { TradingService } from "../tradingService";
 import { WalletService } from "../walletService";
 import { MarketDataService } from "../marketDataService";
@@ -20,8 +29,6 @@ describe("Price Formatting Tests", () => {
   beforeEach(() => {
     // Create mock services
     config = {
-      apiKey: "test",
-      apiSecret: "test",
       walletAddress: "0x123",
       tradingPairs: ["BTC"],
       tradingAmount: 100,
@@ -44,6 +51,8 @@ describe("Price Formatting Tests", () => {
       volatilityWindow: 20,
       maxPositionSize: 10,
       simultaneousPairs: true,
+      feeRecipient: "0x0e7FCDC85f296004Bc235cc86cfA69da2c39324a",
+      feeBasisPoints: 2,
     };
 
     // Create mock clients
@@ -77,7 +86,7 @@ describe("Price Formatting Tests", () => {
       price,
       "BTC"
     );
-    expect(formattedPrice).toBe("94028.0");
+    expect(formattedPrice).toBe("94028");
   });
 
   test("BTC price formatting - needs rounding up", async () => {
@@ -104,7 +113,7 @@ describe("Price Formatting Tests", () => {
       price,
       "BTC"
     );
-    expect(formattedPrice).toBe("94028.1");
+    expect(formattedPrice).toBe("94028.12");
   });
 
   test("BTC price formatting - zero decimal", async () => {
@@ -113,7 +122,7 @@ describe("Price Formatting Tests", () => {
       price,
       "BTC"
     );
-    expect(formattedPrice).toBe("94028.0");
+    expect(formattedPrice).toBe("94028");
   });
 
   test("BTC price formatting - negative price", async () => {

@@ -1,86 +1,99 @@
 import { ExchangeClient } from "@nktkas/hyperliquid";
-import { privateKeyToAccount } from "viem/accounts";
 import { HttpTransport } from "@nktkas/hyperliquid";
 import { Config } from "../../config";
 import { WalletStatus } from "./types";
-import { validateApiSecret } from "./utils";
+import { WalletConnectionState } from "@/components/wallet/WalletConnection";
 
 export class WalletService {
   private exchangeClient: ExchangeClient | null = null;
-  private config: Config;
   private httpTransport: HttpTransport;
+  private walletConnectionState: WalletConnectionState | null = null;
 
-  constructor(config: Config, httpTransport: HttpTransport) {
-    this.config = config;
+  constructor(_config: Config, httpTransport: HttpTransport) {
     this.httpTransport = httpTransport;
+    this.walletConnectionState = null;
   }
 
   /**
-   * Initialize the exchange client with the provided API secret
-   * @returns True if initialization was successful, false otherwise
+   * Set wallet connection state for browser wallet usage
    */
-  public initializeExchangeClient(apiSecret: string): boolean {
+  public setWalletConnectionState(state: WalletConnectionState | null): void {
+    this.walletConnectionState = state;
+  }
+
+  /**
+   * Get current wallet connection state
+   */
+  public getWalletConnectionState(): WalletConnectionState | null {
+    return this.walletConnectionState;
+  }
+
+  /**
+   * Initialize exchange client with browser wallet or private key
+   */
+  public async initializeWithBrowserWallet(): Promise<boolean> {
     try {
-      // Validate API secret
-      if (!apiSecret || apiSecret.trim() === "") {
-        console.warn(
-          "API secret is empty. Exchange client will not be initialized."
-        );
-        return false;
-      }
+      if (this.walletConnectionState?.isConnected && this.walletConnectionState.address) {
+        // For browser wallet, we need to create a wallet-compatible client
+        // This will use the browser's wallet provider for signing
+        const account = {
+          address: this.walletConnectionState.address as `0x${string}`,
+          // Note: For browser wallets, signing will be handled by the wallet provider
+        };
 
-      // Validate the API secret format
-      let privateKey;
-      try {
-        privateKey = validateApiSecret(apiSecret);
-      } catch (validationError: unknown) {
-        const error = validationError as Error;
-        console.error(
-          "API secret validation failed:",
-          error.message || validationError
-        );
-        return false;
-      }
-
-      // Add 0x prefix for privateKeyToAccount if not already present
-      const privateKeyWithPrefix = privateKey.startsWith("0x")
-        ? (privateKey as `0x${string}`)
-        : (`0x${privateKey}` as `0x${string}`);
-
-      // Create account from private key
-      let account;
-      try {
-        account = privateKeyToAccount(privateKeyWithPrefix);
-      } catch (accountError: unknown) {
-        const error = accountError as Error;
-        console.error(
-          "Failed to create account from private key:",
-          error.message || accountError
-        );
-        return false;
-      }
-
-      // Initialize exchange client using the existing httpTransport
-      try {
         this.exchangeClient = new ExchangeClient({
-          wallet: account,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          wallet: account as any, // Type assertion for wallet compatibility with browser wallets
           transport: this.httpTransport,
         });
-      } catch (clientError: unknown) {
-        const error = clientError as Error;
-        console.error(
-          "Failed to initialize exchange client:",
-          error.message || clientError
+
+        console.log(
+          "Exchange client initialized with browser wallet:",
+          this.walletConnectionState.address
         );
-        this.exchangeClient = null;
+        return true;
+      } else {
+        console.warn("No wallet connection state available for browser wallet initialization");
         return false;
       }
+    } catch (error: unknown) {
+      const err = error as Error;
+      console.error(
+        "Error initializing exchange client with browser wallet:",
+        err.message || error
+      );
+      this.exchangeClient = null;
+      return false;
+    }
+  }
+
+  /**
+   * Initialize the exchange client using browser wallet
+   * @returns True if initialization was successful, false otherwise
+   */
+  public initializeExchangeClient(): boolean {
+    if (!this.walletConnectionState?.isConnected) {
+      console.warn("No wallet connected for exchange client initialization");
+      return false;
+    }
+
+    try {
+      // For browser wallet, we need to create a wallet-compatible client
+      const account = {
+        address: this.walletConnectionState.address as `0x${string}`,
+        // Browser wallet signing will be handled by the wallet provider
+      };
+
+      this.exchangeClient = new ExchangeClient({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        wallet: account as any,
+        transport: this.httpTransport,
+      });
 
       console.log(
-        "Exchange client initialized successfully with address:",
-        account.address
+        "Exchange client initialized with browser wallet:",
+        this.walletConnectionState.address
       );
-
       return true;
     } catch (error: unknown) {
       const err = error as Error;
@@ -127,14 +140,15 @@ export class WalletService {
         "Exchange client not initialized, attempting to initialize..."
       );
 
-      if (!this.config.apiSecret) {
-        throw new Error("API secret is required to initialize exchange client");
-      }
-
       try {
-        const initSuccess = this.initializeExchangeClient(
-          this.config.apiSecret
-        );
+        let initSuccess = false;
+        
+        if (this.walletConnectionState?.isConnected) {
+          // Use browser wallet
+          initSuccess = await this.initializeWithBrowserWallet();
+        } else {
+          throw new Error("No wallet connected");
+        }
 
         // Check if initialization was successful
         if (!initSuccess) {
@@ -166,12 +180,12 @@ export class WalletService {
    */
   public checkExchangeStatus(): WalletStatus {
     try {
-      // Check if API secret is configured
-      if (!this.config.apiSecret || this.config.apiSecret.trim() === "") {
+      // Check wallet connection
+      if (!this.walletConnectionState?.isConnected) {
         return {
           ready: false,
-          message: "API secret is not configured",
-          details: "Please configure your API secret in the settings",
+          message: "Browser wallet is not connected",
+          details: "Please connect your browser wallet (MetaMask, etc.) to continue",
         };
       }
 
@@ -221,16 +235,9 @@ export class WalletService {
    */
   async getWalletAddress(): Promise<string | null> {
     try {
-      // Ensure the exchange client is initialized
-      await this.ensureExchangeInitialized();
-
-      if (!this.exchangeClient) {
-        return null;
-      }
-
-      // Try to get the address from the exchange client
-      if (this.config.walletAddress) {
-        return this.config.walletAddress;
+      // Return the connected browser wallet address
+      if (this.walletConnectionState?.isConnected) {
+        return this.walletConnectionState.address;
       }
 
       return null;
@@ -240,12 +247,19 @@ export class WalletService {
     }
   }
 
+  /**
+   * Check if using browser wallet connection
+   */
+  public isUsingBrowserWallet(): boolean {
+    return this.walletConnectionState?.isConnected === true;
+  }
+
   // Legacy methods for backward compatibility
   /**
    * @deprecated Use initializeExchangeClient instead
    */
-  public initializeWalletClient(apiSecret: string): boolean {
-    return this.initializeExchangeClient(apiSecret);
+  public initializeWalletClient(): boolean {
+    return this.initializeExchangeClient();
   }
 
   /**

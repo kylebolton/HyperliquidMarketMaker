@@ -1,9 +1,11 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
+import { useState } from "react";
 import { Config } from "@/app/config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { WalletConnection, WalletConnectionState } from "@/components/wallet/WalletConnection";
 import {
   Card,
   CardContent,
@@ -33,7 +35,7 @@ interface ConfigFormProps {
   config: Config;
   availableCoins: string[];
   isLoading: boolean;
-  onSubmit: (values: z.infer<typeof configFormSchema>) => Promise<void>;
+  onSubmit: (values: z.infer<typeof configFormSchema>, walletState?: WalletConnectionState) => Promise<void>;
 }
 
 export function ConfigForm({
@@ -42,13 +44,13 @@ export function ConfigForm({
   isLoading,
   onSubmit,
 }: ConfigFormProps) {
+  const [walletState, setWalletState] = useState<WalletConnectionState | null>(null);
+
   // Initialize config form
   const configForm = useForm<z.infer<typeof configFormSchema>>({
     resolver: zodResolver(configFormSchema),
     defaultValues: {
-      apiKey: config.apiKey,
-      apiSecret: config.apiSecret,
-      walletAddress: config.walletAddress,
+      walletAddress: config.walletAddress || "",
       tradingAmount: config.tradingAmount,
       maxSpread: config.maxSpread,
       minSpread: config.minSpread,
@@ -69,6 +71,26 @@ export function ConfigForm({
     },
   });
 
+  // Handle wallet connection
+  const handleWalletConnect = (state: WalletConnectionState) => {
+    setWalletState(state);
+    if (state.isConnected && state.address) {
+      // Auto-fill wallet address when wallet is connected
+      configForm.setValue("walletAddress", state.address);
+    }
+  };
+
+  // Handle wallet disconnect
+  const handleWalletDisconnect = () => {
+    setWalletState(null);
+    configForm.setValue("walletAddress", "");
+  };
+
+  // Handle form submission
+  const handleSubmit = async (values: z.infer<typeof configFormSchema>) => {
+    await onSubmit(values, walletState || undefined);
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -78,58 +100,18 @@ export function ConfigForm({
       <CardContent>
         <Form {...configForm}>
           <form
-            onSubmit={configForm.handleSubmit(onSubmit)}
+            onSubmit={configForm.handleSubmit(handleSubmit)}
             className="space-y-4"
           >
+            {/* Wallet Connection Section */}
+            <div className="space-y-4">
+              <WalletConnection
+                onWalletConnect={handleWalletConnect}
+                onWalletDisconnect={handleWalletDisconnect}
+              />
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField
-                control={configForm.control}
-                name="apiKey"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>API Key</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Enter your API key" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={configForm.control}
-                name="apiSecret"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>API Secret</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="password"
-                        placeholder="Enter your API secret"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={configForm.control}
-                name="walletAddress"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Wallet Address</FormLabel>
-                    <FormControl>
-                      <Input
-                        placeholder="Enter your wallet address"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
 
               <FormField
                 control={configForm.control}
@@ -491,9 +473,18 @@ export function ConfigForm({
               />
             </div>
 
-            <Button type="submit" disabled={isLoading}>
+            <Button 
+              type="submit" 
+              disabled={isLoading || !walletState?.isConnected}
+            >
               {isLoading ? "Saving..." : "Save Configuration"}
             </Button>
+            
+            {!walletState?.isConnected && (
+              <p className="text-sm text-muted-foreground text-center">
+                Please connect your wallet before saving the configuration
+              </p>
+            )}
           </form>
         </Form>
       </CardContent>

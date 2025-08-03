@@ -18,6 +18,7 @@ import {
   configFormSchema,
   orderFormSchema,
 } from "./types";
+import { WalletConnectionState } from "@/components/wallet/WalletConnection";
 
 // Define ErrorType here since it's not exported from types
 type ErrorType = "critical" | "warning" | "info";
@@ -44,14 +45,6 @@ interface Position {
   [key: string]: unknown;
 }
 
-interface ApiOrder {
-  id?: string;
-  coin: string;
-  side: string;
-  price: string;
-  sz: string;
-  [key: string]: unknown;
-}
 
 interface MarketMakerProps {
   config: Config;
@@ -374,16 +367,17 @@ export function MarketMaker({
   };
 
   // Handle config form submission
-  const onConfigSubmit = async (values: z.infer<typeof configFormSchema>) => {
+  const onConfigSubmit = async (
+    values: z.infer<typeof configFormSchema>,
+    walletState?: WalletConnectionState
+  ) => {
     try {
       setIsLoading(true);
 
       // Create a new config object with the form values
       const newConfig: Config = {
         ...config,
-        apiKey: values.apiKey,
-        apiSecret: values.apiSecret,
-        walletAddress: values.walletAddress,
+        walletAddress: values.walletAddress || walletState?.address || "",
         tradingAmount: values.tradingAmount,
         maxSpread: values.maxSpread,
         minSpread: values.minSpread,
@@ -410,8 +404,8 @@ export function MarketMaker({
       const newService = new HyperliquidService(newConfig);
       setHyperliquidService(newService);
 
-      // Initialize the wallet
-      await newService.initializeWallet();
+      // Initialize the wallet with wallet state if using browser wallet
+      await newService.initializeWallet(walletState || undefined);
 
       setIsLoading(false);
       setActiveTab("trading");
@@ -454,7 +448,8 @@ export function MarketMaker({
       );
 
       // Register event listeners
-      marketMakerStrategy.on("error", (errorMessage: string) => {
+      marketMakerStrategy.on("error", (...args: unknown[]) => {
+        const errorMessage = args[0] as string;
         handleError("Market maker error", errorMessage, "warning");
       });
 
@@ -466,7 +461,8 @@ export function MarketMaker({
         try {
           // Get account info
           const accountInfo = await hyperliquidService.getAccountInfo();
-          setAccountInfo(accountInfo);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          setAccountInfo(accountInfo as any);
 
           // Get PNL data
           const pnlData = await hyperliquidService.getTotalPnl();
@@ -477,12 +473,14 @@ export function MarketMaker({
 
           // Get positions
           if (pnlData.positions) {
-            setPositions(pnlData.positions);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            setPositions(pnlData.positions as any);
           }
 
           // Get open orders
           const openOrders = await hyperliquidService.getOpenOrders();
-          const formattedOrders = openOrders.map((order: ApiOrder) => ({
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const formattedOrders = (openOrders as any[]).map((order: any) => ({
             id: order.id || `order-${Date.now()}-${Math.random()}`,
             coin: order.coin,
             side: order.side === "B" ? "buy" : ("sell" as "buy" | "sell"),

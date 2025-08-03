@@ -1,6 +1,7 @@
 import { HyperliquidService as ModularHyperliquidService } from "./index";
 import { Config } from "../../config";
 import { HyperliquidCandle, QueuedRequest } from "./types";
+import { WalletConnectionState } from "@/components/wallet/WalletConnection";
 
 /**
  * Compatibility layer for the HyperliquidService
@@ -41,8 +42,8 @@ export class HyperliquidService extends ModularHyperliquidService {
   constructor(config: Config) {
     super(config);
 
-    // Initialize wallet if API secret is provided
-    if (config.apiSecret) {
+    // Initialize wallet if wallet address is configured
+    if (config.walletAddress) {
       this.initializeWallet().catch(err => {
         console.error("Failed to initialize wallet:", err);
       });
@@ -59,8 +60,8 @@ export class HyperliquidService extends ModularHyperliquidService {
   }
 
   // Override initializeWallet to set the walletClient property
-  async initializeWallet(): Promise<void> {
-    await super.initializeWallet();
+  async initializeWallet(walletState?: WalletConnectionState): Promise<void> {
+    await super.initializeWallet(walletState);
 
     // Update the walletClient property after initialization
     this.walletClient = super.getWalletClient();

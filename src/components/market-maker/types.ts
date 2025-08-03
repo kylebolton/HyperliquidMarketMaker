@@ -1,5 +1,6 @@
 import { Config } from "@/app/config";
 import { HyperliquidService } from "@/app/services/hyperliquid/compatibility";
+import { WalletConnectionState } from "@/components/wallet/WalletConnection";
 import * as z from "zod";
 
 // Define the error types
@@ -28,6 +29,7 @@ export interface Order {
 export interface MarketMakerProps {
   config: Config;
   hyperliquidService?: HyperliquidService;
+  walletState?: WalletConnectionState;
 }
 
 // Define the form schema for market maker orders
@@ -42,9 +44,8 @@ export const orderFormSchema = z.object({
 
 // Define the form schema for configuration
 export const configFormSchema = z.object({
-  apiKey: z.string().min(1, "API Key is required"),
-  apiSecret: z.string().min(1, "API Secret is required"),
-  walletAddress: z.string().min(1, "Wallet Address is required"),
+  // Wallet configuration
+  walletAddress: z.string().optional(),
   tradingAmount: z.coerce.number().positive("Trading amount must be positive"),
   maxSpread: z.coerce.number().positive("Max spread must be positive"),
   minSpread: z.coerce.number().positive("Min spread must be positive"),

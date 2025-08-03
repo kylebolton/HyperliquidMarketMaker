@@ -107,31 +107,36 @@ export async function retryWithBackoff<T>(
   }
 }
 
-// Validate API secret format
-export function validateApiSecret(apiSecret: string): string {
-  if (!apiSecret || apiSecret.trim() === "") {
-    throw new Error("API secret cannot be empty");
+// Validate private key format (renamed from validateApiSecret for clarity)
+export function validateApiSecret(privateKey: string): string {
+  return validatePrivateKey(privateKey);
+}
+
+// Validate private key format
+export function validatePrivateKey(privateKey: string): string {
+  if (!privateKey || privateKey.trim() === "") {
+    throw new Error("Private key cannot be empty");
   }
 
   // Remove 0x prefix if present
-  let privateKey = apiSecret;
-  if (privateKey.startsWith("0x")) {
-    privateKey = privateKey.slice(2);
+  let cleanKey = privateKey.trim();
+  if (cleanKey.startsWith("0x")) {
+    cleanKey = cleanKey.slice(2);
   }
 
   // Ensure the key is 64 characters (32 bytes)
-  if (privateKey.length !== 64) {
+  if (cleanKey.length !== 64) {
     throw new Error(
-      "API secret must be a 32-byte hex string (64 characters without 0x prefix)"
+      "Private key must be a 32-byte hex string (64 characters without 0x prefix)"
     );
   }
 
   // Validate that it contains only hex characters
-  if (!/^[0-9a-fA-F]+$/.test(privateKey)) {
-    throw new Error("API secret must contain only hexadecimal characters");
+  if (!/^[0-9a-fA-F]+$/.test(cleanKey)) {
+    throw new Error("Private key must contain only hexadecimal characters");
   }
 
-  return privateKey;
+  return cleanKey;
 }
 
 // Convert time interval string to seconds

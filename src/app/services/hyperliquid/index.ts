@@ -11,6 +11,7 @@ import { RateLimiter } from "./rateLimiter";
 import { WalletService } from "./walletService";
 import { MarketDataService } from "./marketDataService";
 import { TradingService } from "./tradingService";
+import { WalletConnectionState } from "@/components/wallet/WalletConnection";
 
 /**
  * Main HyperliquidService class that integrates all the modular services
@@ -26,6 +27,7 @@ export class HyperliquidService {
   private walletService: WalletService;
   private marketDataService: MarketDataService;
   private tradingService: TradingService;
+  private walletConnectionState: WalletConnectionState | null = null;
 
   constructor(config: Config) {
     this.config = config;
@@ -57,14 +59,14 @@ export class HyperliquidService {
       config
     );
 
-    // Initialize wallet if API secret is provided
-    if (config.apiSecret) {
+    // Initialize wallet if wallet address is provided
+    if (config.walletAddress) {
       this.initializeWallet().catch(err => {
         console.error("Failed to initialize wallet:", err);
       });
     } else {
       console.warn(
-        "No API secret provided. Trading functionality will be limited."
+        "No wallet address provided. Trading functionality will be limited."
       );
     }
   }
@@ -123,43 +125,59 @@ export class HyperliquidService {
   // Wallet Methods
 
   /**
-   * Initialize the wallet with the provided API secret
+   * Set wallet connection state (for browser wallet)
    */
-  async initializeWallet(): Promise<void> {
+  public setWalletConnectionState(state: WalletConnectionState | null): void {
+    this.walletConnectionState = state;
+    this.walletService.setWalletConnectionState(state);
+  }
+
+  /**
+   * Get current wallet connection state
+   */
+  public getWalletConnectionState(): WalletConnectionState | null {
+    return this.walletConnectionState;
+  }
+
+  /**
+   * Initialize the wallet with the provided private key or browser wallet
+   */
+  async initializeWallet(walletState?: WalletConnectionState): Promise<void> {
     try {
-      if (!this.config.apiSecret) {
-        throw new Error("API secret is required to initialize wallet");
+      if (walletState) {
+        // Set the wallet connection state
+        this.setWalletConnectionState(walletState);
       }
 
-      // Initialize the wallet client
-      this.walletService.initializeWalletClient(this.config.apiSecret);
-
-      // Wait a moment for initialization to complete
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Verify the wallet connection
-      const isConnected = await this.walletService.verifyWalletConnection();
-
-      if (!isConnected) {
-        throw new Error("Failed to verify wallet connection");
-      }
-
-      // Get the wallet client and check if the exchange property is available
-      const walletClient = this.walletService.getWalletClient();
-
-      if (walletClient) {
-        // Ensure the exchange property is available
-        const exchangeReady = this.walletService.ensureExchangeProperty();
-        if (!exchangeReady) {
-          console.warn(
-            "Could not initialize exchange property on wallet client. Trading functionality may be limited."
-          );
+      if (this.walletConnectionState?.isConnected) {
+        // Initialize with browser wallet
+        const initSuccess = await this.walletService.initializeWithBrowserWallet();
+        if (!initSuccess) {
+          throw new Error("Failed to initialize with browser wallet");
         }
-      } else {
-        throw new Error("Wallet client is null after initialization");
-      }
 
-      console.log("Wallet initialized successfully");
+        console.log("Wallet initialized successfully with browser wallet");
+        return;
+      } else {
+        throw new Error("No wallet connection available. Please connect a browser wallet.");
+
+        // Get the wallet client and check if the exchange property is available
+        const walletClient = this.walletService.getWalletClient();
+
+        if (walletClient) {
+          // Ensure the exchange property is available
+          const exchangeReady = this.walletService.ensureExchangeProperty();
+          if (!exchangeReady) {
+            console.warn(
+              "Could not initialize exchange property on wallet client. Trading functionality may be limited."
+            );
+          }
+        } else {
+          throw new Error("Wallet client is null after initialization");
+        }
+
+        console.log("Wallet initialized successfully with private key");
+      }
     } catch (error) {
       console.error("Error initializing wallet:", error);
       throw error;
@@ -170,7 +188,14 @@ export class HyperliquidService {
    * Check if the wallet is ready to use
    */
   checkWalletStatus() {
-    return this.walletService.checkWalletStatus();
+    return this.walletService.checkExchangeStatus();
+  }
+
+  /**
+   * Check if using browser wallet connection
+   */
+  public isUsingBrowserWallet(): boolean {
+    return this.walletService.isUsingBrowserWallet();
   }
 
   // Trading Methods
@@ -259,7 +284,7 @@ export class HyperliquidService {
   /**
    * Format price for a specific coin
    */
-  formatPriceForCoin(price: number, coin: string): string {
+  async formatPriceForCoin(price: number, coin: string): Promise<string> {
     return this.tradingService.formatPriceForCoin(price, coin);
   }
 

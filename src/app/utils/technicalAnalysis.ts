@@ -55,7 +55,7 @@ export function calculateRSI(
 ): number | null {
   try {
     const rsi = new RSI(period);
-    prices.forEach(price => rsi.update(price));
+    prices.forEach((price) => rsi.update(price, true));
     return rsi.isStable ? Number(rsi.getResult()?.toFixed(2)) : null;
   } catch (error) {
     console.error("Error calculating RSI:", error);
@@ -71,7 +71,7 @@ export function calculateBollingerBands(
 ): { upper: number | null; middle: number | null; lower: number | null } {
   try {
     const bb = new BollingerBands(period, stdDev);
-    prices.forEach(price => bb.update(price));
+    prices.forEach(price => bb.update(price, true));
 
     if (bb.isStable) {
       const result = bb.getResult();
@@ -106,7 +106,7 @@ export function calculateMACD(
       signalInterval: signalPeriod,
     });
 
-    prices.forEach(price => macd.update(price));
+    prices.forEach(price => macd.update(price, true));
 
     if (macd.isStable) {
       const result = macd.getResult();
@@ -139,9 +139,9 @@ export function calculateSMAs(
     const longSMA = new SMA(longPeriod);
 
     prices.forEach(price => {
-      shortSMA.update(price);
-      mediumSMA.update(price);
-      longSMA.update(price);
+      shortSMA.update(price, true);
+      mediumSMA.update(price, true);
+      longSMA.update(price, true);
     });
 
     return {
@@ -170,15 +170,15 @@ export function calculateEMAs(
     const shortEma = new EMA(shortPeriod);
 
     prices.forEach(price => {
-      veryShortEma.update(price);
-      shortEma.update(price);
+      veryShortEma.update(price, true);
+      shortEma.update(price, true);
     });
 
     return {
       veryShort: veryShortEma.isStable
-        ? Number(veryShortEma.getResult().toString())
+        ? Number(veryShortEma.getResult()?.toString() || '0')
         : null,
-      short: shortEma.isStable ? Number(shortEma.getResult().toString()) : null,
+      short: shortEma.isStable ? Number(shortEma.getResult()?.toString() || '0') : null,
     };
   } catch (error) {
     console.error("Error calculating EMAs:", error);

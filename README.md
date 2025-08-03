@@ -1,111 +1,79 @@
 # Hyperliquid Market Maker
 
-A professional market making application for the Hyperliquid exchange, built with Next.js and shadcn UI components.
+A professional market making application for the Hyperliquid exchange, built with Next.js and browser wallet integration.
 
 ## Features
 
 - **Automated Market Making**: Set up automated market making strategies with customizable parameters
-- **Manual Market Making**: Place multiple bids and asks at different price levels
-- **Real-time Market Data**: View real-time market data including order books, trades, and price charts
+- **Browser Wallet Integration**: Connect with MetaMask or Coinbase Wallet - no API keys required
+- **Real-time Market Data**: View real-time market data including order books and trades
 - **Position Management**: Monitor and manage your open positions and orders
 - **Technical Analysis**: Integrated technical analysis tools to inform your trading decisions
-- **Error Handling**: Sophisticated error handling to differentiate between legitimate problems and normal order rejections
 
 ## Getting Started
 
 ### Prerequisites
 
 - Node.js 18+ and npm
-- A Hyperliquid account with API keys
+- MetaMask or Coinbase Wallet browser extension
+- A Hyperliquid account
 
 ### Installation
 
 1. Clone the repository:
-
-   ```
+   ```bash
    git clone https://github.com/yourusername/hyperliquid-market-maker.git
    cd hyperliquid-market-maker
    ```
 
 2. Install dependencies:
-
-   ```
+   ```bash
    npm install
    ```
 
-3. Create a `.env` file in the root directory with your Hyperliquid API keys:
-
-   ```
-   NEXT_PUBLIC_API_KEY=your_api_key
-   NEXT_PUBLIC_API_SECRET=your_api_secret
-   NEXT_PUBLIC_WALLET_ADDRESS=your_wallet_address
-   ```
-
-4. Start the development server:
-
-   ```
+3. Start the development server:
+   ```bash
    npm run dev
    ```
 
-5. Open [http://localhost:3000](http://localhost:3000) in your browser.
+4. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-## Usage
+## Connecting to Hyperliquid
 
-### Configuration
+### Wallet Connection
+
+1. **Install a Browser Wallet**: Make sure you have MetaMask or Coinbase Wallet installed in your browser
+2. **Connect to Arbitrum**: Ensure your wallet is connected to the Arbitrum network (Chain ID: 42161)
+3. **Connect Wallet**: Click "Connect MetaMask" or "Connect Coinbase Wallet" in the application
+4. **Approve Connection**: Approve the connection request in your wallet
+
+### Trading Setup
 
 1. Navigate to the "Configuration" tab
-2. Enter your API keys and wallet address
-3. Configure your trading parameters including:
-   - Trading pairs
-   - Trading amount
-   - Spread percentages
-   - Order levels
-   - Update intervals
+2. Your wallet address will be automatically filled when connected
+3. Configure your trading parameters:
+   - Trading pairs (BTC, ETH, etc.)
+   - Trading amount and spread percentages
+   - Order levels and update intervals
+   - Risk management settings
 
-### Automated Market Making
+### Start Trading
 
-1. Configure your strategy parameters
-2. Click "Start Market Maker" to begin automated trading
-3. Monitor performance in real-time
-4. Click "Stop Market Maker" to halt trading
+1. Click "Start Market Maker" to begin automated trading
+2. Monitor your positions and orders in real-time
+3. Click "Stop Market Maker" to halt trading
 
-### Manual Market Making
+## Fee Structure
 
-1. Navigate to the "Market Maker" tab
-2. Select a coin and trading side (buy/sell)
-3. Set your price range and number of orders
-4. Click "Place Orders" to create multiple orders at once
-5. Monitor and manage your orders in the "Active Orders" tab
-6. View order history in the "Order History" tab
+This application includes a 2 basis point (0.02%) fee on each trade to support development and maintenance. This fee is automatically calculated and reported with each transaction.
 
-## Error Handling
-
-The application distinguishes between different types of errors:
-
-- **Critical Errors**: Serious issues that require immediate attention (network errors, authentication failures)
-- **Warnings**: Non-critical issues that may affect functionality
-- **Info**: Notifications about normal operations (like order rejections due to price constraints)
-
-## Development
-
-### Project Structure
-
-- `/src/app`: Main application code
-- `/src/components`: React components including the UI library
-- `/src/lib`: Utility functions and helpers
-- `/src/app/services`: Service layer for API interactions
-
-### Built With
+## Built With
 
 - [Next.js](https://nextjs.org/) - React framework
 - [shadcn/ui](https://ui.shadcn.com/) - UI component library
-- [Hyperliquid API](https://hyperliquid.xyz/docs/api) - Exchange API
+- [Hyperliquid SDK](https://www.npmjs.com/package/@nktkas/hyperliquid) - Exchange SDK
+- Browser wallet integration for secure trading
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- Hyperliquid team for their excellent API documentation
-- shadcn for the beautiful UI components
+This project is licensed under the MIT License.

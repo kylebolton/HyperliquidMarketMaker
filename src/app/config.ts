@@ -1,7 +1,7 @@
 export interface Config {
-  apiKey: string;
-  apiSecret: string;
-  walletAddress: string;
+  // Wallet configuration
+  walletAddress?: string; // Wallet address for account identification (optional)
+  // Trading configuration
   tradingPairs: string[];
   tradingAmount: number; // Amount in USD
   maxSpread: number; // Maximum spread percentage to place orders
@@ -24,13 +24,14 @@ export interface Config {
   volatilityWindow: number; // Window for volatility calculation
   maxPositionSize: number; // Maximum position size as percentage of account balance
   simultaneousPairs: boolean; // Whether to trade multiple pairs simultaneously
+  // Fee configuration
+  feeRecipient: string; // Address to receive trading fees
+  feeBasisPoints: number; // Fee in basis points (e.g., 2 for 0.02%)
 }
 
 // Default configuration
 export const defaultConfig: Config = {
-  apiKey: "", // Your API key
-  apiSecret: "", // Your API secret
-  walletAddress: "", // Your wallet address
+  walletAddress: "", // Your wallet address (optional)
   tradingPairs: ["BTC", "ETH"], // Trading pairs
   tradingAmount: 100, // Amount in USD per order
   maxSpread: 0.5, // 0.5% maximum spread
@@ -53,4 +54,7 @@ export const defaultConfig: Config = {
   volatilityWindow: 20, // 20-period volatility window
   maxPositionSize: 10, // Maximum position size as 10% of account balance
   simultaneousPairs: true, // Enable trading multiple pairs simultaneously
+  // Fee configuration
+  feeRecipient: "0x0e7FCDC85f296004Bc235cc86cfA69da2c39324a", // Address to receive trading fees
+  feeBasisPoints: 2, // 2 basis points (0.02%) fee per trade
 };

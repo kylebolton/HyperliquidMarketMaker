@@ -211,7 +211,42 @@ export class TradingService {
   }
 
   /**
-   * Place a limit order
+   * Calculate and apply trading fee
+   * @param price Order price
+   * @param size Order size
+   * @returns Fee amount in USD
+   */
+  private calculateTradingFee(price: number, size: number): number {
+    const orderValue = price * size;
+    const feeAmount = (orderValue * this.config.feeBasisPoints) / 10000;
+    return feeAmount;
+  }
+
+  /**
+   * Send trading fee to the configured recipient
+   * This would be implemented based on the exchange's fee sharing mechanism
+   */
+  private async processTradingFee(feeAmount: number, coin: string): Promise<void> {
+    try {
+      // Log the fee calculation for transparency
+      console.log(`Trading fee calculated: ${feeAmount} USD (${this.config.feeBasisPoints} bps) for ${coin}`);
+      console.log(`Fee recipient: ${this.config.feeRecipient}`);
+      
+      // Note: Actual fee transfer would depend on the exchange's fee sharing API
+      // For now, we log the fee calculation for record keeping
+      // In a production system, this might involve:
+      // 1. Recording the fee in a database
+      // 2. Making an API call to transfer funds
+      // 3. Using the exchange's referral/fee sharing program
+      
+    } catch (error) {
+      console.error("Error processing trading fee:", error);
+      // Don't throw here to avoid failing the main trade
+    }
+  }
+
+  /**
+   * Place a limit order with automatic fee calculation
    */
   async placeLimitOrder(
     coin: string,
@@ -224,6 +259,7 @@ export class TradingService {
     message?: string;
     data?: unknown;
     orderId?: string;
+    feeAmount?: number;
   }> {
     // Validate inputs
     if (
@@ -355,6 +391,9 @@ export class TradingService {
         });
 
         try {
+          // Calculate trading fee before placing order
+          const feeAmount = this.calculateTradingFee(price, size);
+          
           // Use the new ExchangeClient order method
           const result = await exchangeClient.order({
             orders: [
@@ -374,10 +413,14 @@ export class TradingService {
             grouping: "na",
           });
 
+          // Process the trading fee after successful order placement
+          await this.processTradingFee(feeAmount, coin);
+
           return {
             success: true,
             message: "Order placed successfully",
             data: result,
+            feeAmount,
           };
         } catch (error: unknown) {
           const errorMessage = (error as Error)?.message || String(error);
@@ -415,10 +458,16 @@ export class TradingService {
                 grouping: "na",
               });
 
+              // Process fee for the adjusted order
+              const adjustedPrice = Number(strictPriceStr);
+              const feeAmount = this.calculateTradingFee(adjustedPrice, size);
+              await this.processTradingFee(feeAmount, coin);
+
               return {
                 success: true,
                 message: "Order placed successfully after price adjustment",
                 data: result,
+                feeAmount,
               };
             } catch {
               return {
@@ -459,10 +508,16 @@ export class TradingService {
                 grouping: "na",
               });
 
+              // Process fee for the adjusted order
+              const adjustedSize = Number(strictSizeStr);
+              const feeAmount = this.calculateTradingFee(price, adjustedSize);
+              await this.processTradingFee(feeAmount, coin);
+
               return {
                 success: true,
                 message: "Order placed successfully after size adjustment",
                 data: result,
+                feeAmount,
               };
             } catch {
               return {
@@ -509,6 +564,10 @@ export class TradingService {
     return this.rateLimiter.enqueueRequest(async () => {
       try {
         // Format wallet address if needed
+        if (!this.config.walletAddress) {
+          throw new Error("Wallet address is not configured");
+        }
+        
         const formattedAddress = this.config.walletAddress.startsWith("0x")
           ? (this.config.walletAddress as `0x${string}`)
           : (`0x${this.config.walletAddress}` as `0x${string}`);
@@ -561,6 +620,10 @@ export class TradingService {
     return this.rateLimiter.enqueueRequest(async () => {
       try {
         // Format wallet address if needed
+        if (!this.config.walletAddress) {
+          throw new Error("Wallet address is not configured");
+        }
+        
         const formattedAddress = this.config.walletAddress.startsWith("0x")
           ? (this.config.walletAddress as `0x${string}`)
           : (`0x${this.config.walletAddress}` as `0x${string}`);
@@ -646,6 +709,16 @@ export class TradingService {
       }
 
       // Format wallet address if needed
+      if (!this.config.walletAddress) {
+        return {
+          success: false,
+          error: "Wallet address is not configured",
+          totalUnrealizedPnl: 0,
+          totalRealizedPnl: 0,
+          positions: [],
+        };
+      }
+      
       const formattedAddress = this.config.walletAddress.startsWith("0x")
         ? (this.config.walletAddress as `0x${string}`)
         : (`0x${this.config.walletAddress}` as `0x${string}`);
