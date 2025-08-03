@@ -16,6 +16,6 @@ module.exports = {
   },
   setupFilesAfterEnv: ["<rootDir>/src/test/setup.ts"],
   transformIgnorePatterns: [
-    "node_modules/(?!(@nktkas/hyperliquid|@noble/secp256k1)/)"
+    "node_modules/(?!(@nktkas/hyperliquid|@noble/secp256k1|viem|@noble|@scure)/)"
   ],
 };
