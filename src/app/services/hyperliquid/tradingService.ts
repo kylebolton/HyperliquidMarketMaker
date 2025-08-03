@@ -89,6 +89,15 @@ export class TradingService {
   }
 
   /**
+   * Update the configuration at runtime
+   * @param config New configuration object
+   */
+  public updateConfig(config: Config): void {
+    this.config = config;
+    console.log("TradingService config updated with wallet address:", config.walletAddress);
+  }
+
+  /**
    * Refresh asset metadata from the API
    */
   private async refreshAssetMetadata(): Promise<void> {

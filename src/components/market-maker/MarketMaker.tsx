@@ -18,7 +18,7 @@ import {
   configFormSchema,
   orderFormSchema,
 } from "./types";
-import { WalletConnectionState } from "@/components/wallet/WalletConnection";
+import { WalletConnectionState, WalletConnection } from "@/components/wallet/WalletConnection";
 
 // Define ErrorType here since it's not exported from types
 type ErrorType = "critical" | "warning" | "info";
@@ -82,6 +82,36 @@ export function MarketMaker({
   const [dataRefreshInterval, setDataRefreshInterval] =
     useState<NodeJS.Timeout | null>(null);
   const [coinPrices, setCoinPrices] = useState<Map<string, number>>(new Map());
+  const [walletConnectionState, setWalletConnectionState] = useState<WalletConnectionState | null>(null);
+
+  // Handle wallet connection
+  const handleWalletConnect = useCallback((state: WalletConnectionState) => {
+    setWalletConnectionState(state);
+    
+    // Update the config with the wallet address
+    if (state.isConnected && state.address) {
+      const updatedConfig = {
+        ...config,
+        walletAddress: state.address
+      };
+      setConfig(updatedConfig);
+      
+      // Update the HyperliquidService with the new wallet state and config
+      if (hyperliquidService) {
+        hyperliquidService.setWalletConnectionState(state);
+        hyperliquidService.updateConfig(updatedConfig);
+      }
+    }
+  }, [hyperliquidService, config]);
+
+  // Handle wallet disconnection
+  const handleWalletDisconnect = useCallback(() => {
+    setWalletConnectionState(null);
+    // Update the HyperliquidService to clear wallet state
+    if (hyperliquidService) {
+      hyperliquidService.setWalletConnectionState(null);
+    }
+  }, [hyperliquidService]);
 
   // Handle errors - memoized to prevent infinite re-renders
   const handleError = useCallback((message: string, error: unknown, type: ErrorType) => {
@@ -148,6 +178,25 @@ export function MarketMaker({
     },
     [hyperliquidService, handleError]
   );
+
+  // Initialize HyperliquidService if not provided
+  useEffect(() => {
+    if (!hyperliquidService) {
+      try {
+        const service = new HyperliquidService(config);
+        setHyperliquidService(service);
+      } catch (error) {
+        handleError("Failed to initialize HyperliquidService", error, "critical");
+      }
+    }
+  }, [config, hyperliquidService, handleError]);
+
+  // Update service wallet state when wallet connection changes
+  useEffect(() => {
+    if (hyperliquidService && walletConnectionState) {
+      hyperliquidService.setWalletConnectionState(walletConnectionState);
+    }
+  }, [hyperliquidService, walletConnectionState]);
 
   // Fetch available coins on component mount
   useEffect(() => {
@@ -430,7 +479,31 @@ export function MarketMaker({
 
       setIsLoading(true);
 
-      // Check wallet status
+      // First check if wallet is connected
+      if (!walletConnectionState?.isConnected) {
+        handleError(
+          "Wallet not connected",
+          new Error("Please connect your wallet before starting the market maker"),
+          "critical"
+        );
+        setIsLoading(false);
+        return;
+      }
+
+      // Initialize wallet with the current connection state
+      try {
+        await hyperliquidService.initializeWallet(walletConnectionState);
+      } catch (walletError) {
+        handleError(
+          "Failed to initialize wallet",
+          walletError,
+          "critical"
+        );
+        setIsLoading(false);
+        return;
+      }
+
+      // Check wallet status after initialization
       const walletStatus = hyperliquidService.checkWalletStatus();
       if (!walletStatus.ready) {
         handleError(
@@ -562,6 +635,15 @@ export function MarketMaker({
 
         <TabsContent value="trading">
           <div className="space-y-6">
+            {/* Wallet Connection Section - Only show if wallet is not connected */}
+            {!walletConnectionState?.isConnected && (
+              <WalletConnection
+                onWalletConnect={handleWalletConnect}
+                onWalletDisconnect={handleWalletDisconnect}
+                className="mb-4"
+              />
+            )}
+
             <TradingDashboard
               config={config}
               isRunning={isRunning}

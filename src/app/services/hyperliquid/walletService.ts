@@ -3,11 +3,13 @@ import { HttpTransport } from "@nktkas/hyperliquid";
 import { Config } from "../../config";
 import { WalletStatus } from "./types";
 import { WalletConnectionState } from "@/components/wallet/WalletConnection";
+import { createWalletClient, custom, type WalletClient } from "viem";
 
 export class WalletService {
   private exchangeClient: ExchangeClient | null = null;
   private httpTransport: HttpTransport;
   private walletConnectionState: WalletConnectionState | null = null;
+  private viemWalletClient: WalletClient | null = null;
 
   constructor(_config: Config, httpTransport: HttpTransport) {
     this.httpTransport = httpTransport;
@@ -19,6 +21,12 @@ export class WalletService {
    */
   public setWalletConnectionState(state: WalletConnectionState | null): void {
     this.walletConnectionState = state;
+    
+    // Clear existing clients if wallet state is being reset
+    if (!state?.isConnected) {
+      this.exchangeClient = null;
+      this.viemWalletClient = null;
+    }
   }
 
   /**
@@ -34,16 +42,21 @@ export class WalletService {
   public async initializeWithBrowserWallet(): Promise<boolean> {
     try {
       if (this.walletConnectionState?.isConnected && this.walletConnectionState.address) {
-        // For browser wallet, we need to create a wallet-compatible client
-        // This will use the browser's wallet provider for signing
-        const account = {
-          address: this.walletConnectionState.address as `0x${string}`,
-          // Note: For browser wallets, signing will be handled by the wallet provider
-        };
+        // Check if window.ethereum is available
+        if (typeof window === 'undefined' || !window.ethereum) {
+          console.error("window.ethereum is not available");
+          return false;
+        }
 
+        // Create a proper viem wallet client that can handle EIP-712 signing
+        this.viemWalletClient = createWalletClient({
+          account: this.walletConnectionState.address as `0x${string}`,
+          transport: custom(window.ethereum),
+        });
+
+        // Initialize ExchangeClient with the viem wallet client
         this.exchangeClient = new ExchangeClient({
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          wallet: account as any, // Type assertion for wallet compatibility with browser wallets
+          wallet: this.viemWalletClient,
           transport: this.httpTransport,
         });
 
@@ -63,6 +76,7 @@ export class WalletService {
         err.message || error
       );
       this.exchangeClient = null;
+      this.viemWalletClient = null;
       return false;
     }
   }
@@ -78,15 +92,21 @@ export class WalletService {
     }
 
     try {
-      // For browser wallet, we need to create a wallet-compatible client
-      const account = {
-        address: this.walletConnectionState.address as `0x${string}`,
-        // Browser wallet signing will be handled by the wallet provider
-      };
+      // Check if window.ethereum is available
+      if (typeof window === 'undefined' || !window.ethereum) {
+        console.error("window.ethereum is not available");
+        return false;
+      }
 
+      // Create a proper viem wallet client that can handle EIP-712 signing
+      this.viemWalletClient = createWalletClient({
+        account: this.walletConnectionState.address as `0x${string}`,
+        transport: custom(window.ethereum),
+      });
+
+      // Initialize ExchangeClient with the viem wallet client
       this.exchangeClient = new ExchangeClient({
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        wallet: account as any,
+        wallet: this.viemWalletClient,
         transport: this.httpTransport,
       });
 
@@ -102,6 +122,7 @@ export class WalletService {
         err.message || error
       );
       this.exchangeClient = null;
+      this.viemWalletClient = null;
       return false;
     }
   }
@@ -110,21 +131,26 @@ export class WalletService {
    * Verify that the exchange connection is working
    */
   public async verifyExchangeConnection(): Promise<boolean> {
-    if (!this.exchangeClient) {
+    if (!this.exchangeClient || !this.viemWalletClient) {
       console.error(
-        "Cannot verify exchange connection: exchange client is not initialized"
+        "Cannot verify exchange connection: exchange client or viem wallet client is not initialized"
       );
       return false;
     }
 
     try {
-      // Try to get the wallet address as a simple verification
-      const exchangeClientWithWallet = this.exchangeClient as ExchangeClient & {
-        wallet?: { address?: string };
-      };
-      const address = exchangeClientWithWallet.wallet?.address;
+      // Try to get the wallet address from the viem wallet client
+      const address = this.viemWalletClient.account?.address;
       console.log("Exchange verification successful with address:", address);
-      return true;
+      
+      // Verify that the wallet can access window.ethereum for signing
+      if (typeof window !== 'undefined' && window.ethereum) {
+        console.log("window.ethereum is available for signing operations");
+        return true;
+      } else {
+        console.warn("window.ethereum is not available - signing may fail");
+        return false;
+      }
     } catch (error) {
       console.error("Exchange verification failed:", error);
       return false;
@@ -240,11 +266,24 @@ export class WalletService {
         return this.walletConnectionState.address;
       }
 
+      // Fallback to viem wallet client if available
+      if (this.viemWalletClient?.account?.address) {
+        return this.viemWalletClient.account.address;
+      }
+
       return null;
     } catch (error) {
       console.error("Error getting wallet address:", error);
       return null;
     }
+  }
+
+  /**
+   * Get the viem wallet client for advanced wallet operations
+   * @returns The viem wallet client or null if not initialized
+   */
+  public getViemWalletClient(): WalletClient | null {
+    return this.viemWalletClient;
   }
 
   /**

@@ -71,6 +71,16 @@ export class HyperliquidService {
     }
   }
 
+  /**
+   * Update the configuration for all services
+   * @param config New configuration object
+   */
+  public updateConfig(config: Config): void {
+    this.config = config;
+    this.tradingService.updateConfig(config);
+    console.log("HyperliquidService config updated with wallet address:", config.walletAddress);
+  }
+
   // Market Data Methods
 
   /**
@@ -150,6 +160,15 @@ export class HyperliquidService {
       }
 
       if (this.walletConnectionState?.isConnected) {
+        // Update config with wallet address from connected wallet
+        if (this.walletConnectionState.address && !this.config.walletAddress) {
+          const updatedConfig = {
+            ...this.config,
+            walletAddress: this.walletConnectionState.address
+          };
+          this.updateConfig(updatedConfig);
+        }
+
         // Initialize with browser wallet
         const initSuccess = await this.walletService.initializeWithBrowserWallet();
         if (!initSuccess) {

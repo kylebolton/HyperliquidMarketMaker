@@ -11,6 +11,9 @@ import { WalletConnectionState } from "@/components/wallet/WalletConnection";
 export class HyperliquidService extends ModularHyperliquidService {
   // Properties from the old service that need to be exposed
   public walletClient: unknown;
+  
+  // Add exchange property for compatibility
+  private _cachedExchange: unknown = null;
   public candleCache: Map<string, HyperliquidCandle[]> = new Map();
   public orderBookCache: Map<string, unknown> = new Map();
   public tradeCache: Map<string, unknown[]> = new Map();
@@ -53,10 +56,10 @@ export class HyperliquidService extends ModularHyperliquidService {
   // Override the getter for exchange to ensure it's always up to date
   get exchange() {
     // This is needed for compatibility with code that uses service.exchange
+    // The wallet client IS the exchange client in the new architecture
     const walletClient = super.getWalletClient();
-    return walletClient
-      ? (walletClient as Record<string, unknown>).exchange
-      : null;
+    this._cachedExchange = walletClient || null;
+    return this._cachedExchange;
   }
 
   // Override initializeWallet to set the walletClient property
@@ -65,39 +68,29 @@ export class HyperliquidService extends ModularHyperliquidService {
 
     // Update the walletClient property after initialization
     this.walletClient = super.getWalletClient();
+    this._cachedExchange = this.walletClient;
 
     // Ensure the wallet client is properly initialized
     if (this.walletClient) {
-      // Wait a moment for the wallet client to fully initialize
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // In the new architecture, the wallet client IS the exchange client
+      // So we just need to verify that it's a valid ExchangeClient
+      const hasExchangeMethods = 
+        typeof (this.walletClient as Record<string, unknown>).order === 'function' ||
+        typeof (this.walletClient as Record<string, unknown>).cancel === 'function' ||
+        typeof (this.walletClient as Record<string, unknown>).cancelByCloid === 'function';
 
-      // Check if the exchange property is available
-      if (!(this.walletClient as Record<string, unknown>).exchange) {
+      if (!hasExchangeMethods) {
         console.warn(
-          "Exchange property not found on wallet client. Attempting to fix..."
+          "Exchange client does not appear to have trading methods. Trading functionality may be limited."
         );
-
-        // Try to manually set the exchange property
-        if (this.walletClient) {
-          // Since we can't access the walletService directly, we'll check if the exchange
-          // property is already available on the wallet client from the parent class
-          if (!(this.walletClient as Record<string, unknown>).exchange) {
-            console.error(
-              "Could not initialize exchange property on wallet client. Trading functionality may be limited."
-            );
-          }
-        }
+      } else {
+        console.log(
+          "Exchange client initialization completed successfully with trading methods available"
+        );
       }
-
-      console.log(
-        "Wallet client initialization completed with exchange:",
-        (this.walletClient as Record<string, unknown>).exchange
-          ? "available"
-          : "not available"
-      );
     } else {
-      console.error(
-        "Wallet client initialization failed in compatibility layer"
+      console.log(
+        "Wallet client initialization completed. Exchange client will be available when needed."
       );
     }
   }
