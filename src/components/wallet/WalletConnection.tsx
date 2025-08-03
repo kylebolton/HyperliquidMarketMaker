@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useEffect, useMemo, useCallback, memo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, CheckCircle, Wallet, Copy, ExternalLink, Loader2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useWalletState } from "@/hooks/useWalletState";
 
 export type WalletProvider = "metamask" | "walletconnect" | "coinbase" | "privatekey";
 
@@ -22,180 +23,34 @@ interface WalletConnectionProps {
   className?: string;
 }
 
-export function WalletConnection({
+const WalletConnectionComponent = function WalletConnection({
   onWalletConnect,
   onWalletDisconnect,
   className = "",
 }: WalletConnectionProps) {
-  const [walletState, setWalletState] = useState<WalletConnectionState>({
-    isConnected: false,
-    address: null,
-    provider: null,
-    chainId: null,
-  });
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    walletState,
+    detection,
+    isConnecting,
+    error,
+    isMounted,
+    connectWallet,
+    disconnectWallet,
+    checkExistingConnections,
+    copyAddress,
+    openEtherscan,
+  } = useWalletState({ onWalletConnect, onWalletDisconnect });
 
-  // Check for existing wallet connections on component mount
+  // Check for existing connections when component mounts - memoized
+  const shouldCheckConnections = isMounted && !detection.isDetecting;
   useEffect(() => {
-    checkExistingConnections();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Listen for account changes
-  useEffect(() => {
-    if (typeof window !== "undefined" && window.ethereum) {
-      const handleAccountsChanged = (accounts: string[]) => {
-        if (accounts.length === 0) {
-          handleDisconnect();
-        } else if (accounts[0] !== walletState.address) {
-          // Account changed, update the state
-          const newState: WalletConnectionState = {
-            ...walletState,
-            address: accounts[0],
-            isConnected: true,
-          };
-          setWalletState(newState);
-          onWalletConnect(newState);
-        }
-      };
-
-      const handleChainChanged = (chainId: string) => {
-        const newState: WalletConnectionState = {
-          ...walletState,
-          chainId: parseInt(chainId, 16),
-        };
-        setWalletState(newState);
-        if (walletState.isConnected) {
-          onWalletConnect(newState);
-        }
-      };
-
-      const handleDisconnect = () => {
-        const disconnectedState: WalletConnectionState = {
-          isConnected: false,
-          address: null,
-          provider: null,
-          chainId: null,
-        };
-        setWalletState(disconnectedState);
-        onWalletDisconnect();
-        setError(null);
-      };
-
-      window.ethereum.on?.("accountsChanged", handleAccountsChanged as (...args: unknown[]) => void);
-      window.ethereum.on?.("chainChanged", handleChainChanged as (...args: unknown[]) => void);
-      window.ethereum.on?.("disconnect", handleDisconnect as (...args: unknown[]) => void);
-
-      return () => {
-        window.ethereum?.removeListener?.("accountsChanged", handleAccountsChanged as (...args: unknown[]) => void);
-        window.ethereum?.removeListener?.("chainChanged", handleChainChanged as (...args: unknown[]) => void);
-        window.ethereum?.removeListener?.("disconnect", handleDisconnect as (...args: unknown[]) => void);
-      };
+    if (shouldCheckConnections) {
+      checkExistingConnections();
     }
-  }, [walletState, onWalletConnect, onWalletDisconnect]);
+  }, [shouldCheckConnections, checkExistingConnections]);
 
-  const checkExistingConnections = async () => {
-    if (typeof window !== "undefined" && window.ethereum) {
-      try {
-        const accounts = await window.ethereum.request({ method: "eth_accounts" }) as string[];
-        const chainId = await window.ethereum.request({ method: "eth_chainId" }) as string;
-        
-        if (accounts.length > 0) {
-          const connectedState: WalletConnectionState = {
-            isConnected: true,
-            address: accounts[0],
-            provider: "metamask",
-            chainId: parseInt(chainId, 16),
-          };
-          setWalletState(connectedState);
-          onWalletConnect(connectedState);
-        }
-      } catch (error) {
-        console.error("Error checking existing connections:", error);
-      }
-    }
-  };
-
-  const connectWallet = useCallback(async (provider: WalletProvider) => {
-    setIsConnecting(true);
-    setError(null);
-
-    try {
-      if (provider === "metamask") {
-        if (typeof window !== "undefined" && window.ethereum) {
-          // Request account access
-          const accounts = await window.ethereum.request({
-            method: "eth_requestAccounts",
-          }) as string[];
-          const chainId = await window.ethereum.request({ method: "eth_chainId" }) as string;
-          
-          if (accounts.length > 0) {
-            const connectedState: WalletConnectionState = {
-              isConnected: true,
-              address: accounts[0],
-              provider: "metamask",
-              chainId: parseInt(chainId, 16),
-            };
-            setWalletState(connectedState);
-            onWalletConnect(connectedState);
-          }
-        } else {
-          setError("MetaMask is not installed. Please install MetaMask to continue.");
-          window.open("https://metamask.io/download/", "_blank");
-        }
-      } else if (provider === "coinbase") {
-        // For Coinbase Wallet
-        if (typeof window !== "undefined" && (window as { ethereum?: { isCoinbaseWallet?: boolean; request: (args: { method: string }) => Promise<unknown> } }).ethereum?.isCoinbaseWallet) {
-          const coinbaseEthereum = (window as { ethereum: { request: (args: { method: string }) => Promise<unknown> } }).ethereum;
-          const accounts = await coinbaseEthereum.request({
-            method: "eth_requestAccounts",
-          }) as string[];
-          const chainId = await coinbaseEthereum.request({ method: "eth_chainId" }) as string;
-          
-          if (accounts.length > 0) {
-            const connectedState: WalletConnectionState = {
-              isConnected: true,
-              address: accounts[0],
-              provider: "coinbase",
-              chainId: parseInt(chainId, 16),
-            };
-            setWalletState(connectedState);
-            onWalletConnect(connectedState);
-          }
-        } else {
-          setError("Coinbase Wallet is not installed.");
-        }
-      }
-    } catch (error: unknown) {
-      const err = error as Error;
-      setError(err.message || "Failed to connect wallet");
-      console.error("Wallet connection error:", error);
-    } finally {
-      setIsConnecting(false);
-    }
-  }, [onWalletConnect]);
-
-  const disconnectWallet = useCallback(() => {
-    const disconnectedState: WalletConnectionState = {
-      isConnected: false,
-      address: null,
-      provider: null,
-      chainId: null,
-    };
-    setWalletState(disconnectedState);
-    onWalletDisconnect();
-    setError(null);
-  }, [onWalletDisconnect]);
-
-  const copyAddress = useCallback((address: string) => {
-    navigator.clipboard.writeText(address);
-  }, []);
-
-  const openEtherscan = useCallback((address: string) => {
-    window.open(`https://etherscan.io/address/${address}`, "_blank");
-  }, []);
-
-  const getProviderName = (provider: WalletProvider | null) => {
+  // Memoize provider name to prevent recalculation
+  const getProviderName = useCallback((provider: WalletProvider | null) => {
     switch (provider) {
       case "metamask": return "MetaMask";
       case "coinbase": return "Coinbase Wallet";
@@ -203,16 +58,22 @@ export function WalletConnection({
       case "privatekey": return "Private Key";
       default: return "Unknown";
     }
-  };
+  }, []);
 
-  const getChainName = (chainId: number | null) => {
+  // Memoize chain name to prevent recalculation
+  const getChainName = useCallback((chainId: number | null) => {
     switch (chainId) {
       case 1: return "Ethereum Mainnet";
       case 42161: return "Arbitrum One";
       case 421614: return "Arbitrum Sepolia";
       default: return chainId ? `Chain ${chainId}` : "Unknown";
     }
-  };
+  }, []);
+
+  // Memoize computed values
+  const providerName = useMemo(() => getProviderName(walletState.provider), [walletState.provider, getProviderName]);
+  const chainName = useMemo(() => getChainName(walletState.chainId), [walletState.chainId, getChainName]);
+  const isWrongNetwork = useMemo(() => walletState.chainId && walletState.chainId !== 42161, [walletState.chainId]);
 
   return (
     <Card className={className}>
@@ -232,7 +93,7 @@ export function WalletConnection({
             {walletState.isConnected ? (
               <>
                 <CheckCircle className="h-3 w-3 mr-1" />
-                Connected to {getProviderName(walletState.provider)}
+                Connected to {providerName}
               </>
             ) : (
               <>
@@ -254,39 +115,44 @@ export function WalletConnection({
         {/* Wallet Connection Buttons */}
         {!walletState.isConnected ? (
           <div className="space-y-2">
-            <div className="grid grid-cols-1 gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => connectWallet("metamask")}
-                disabled={isConnecting}
-                className="w-full"
-              >
-                {isConnecting ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Wallet className="h-4 w-4 mr-2" />
-                )}
-                {typeof window !== "undefined" && window.ethereum
-                  ? "Connect MetaMask"
-                  : "Install MetaMask"}
-              </Button>
-              
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => connectWallet("coinbase")}
-                disabled={isConnecting}
-                className="w-full"
-              >
-                {isConnecting ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Wallet className="h-4 w-4 mr-2" />
-                )}
-                Connect Coinbase Wallet
-              </Button>
-            </div>
+            {!isMounted || detection.isDetecting ? (
+              <div className="text-center py-4">
+                <Loader2 className="h-6 w-6 animate-spin mx-auto" />
+                <p className="text-sm text-muted-foreground mt-2">Loading wallet options...</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => connectWallet("metamask")}
+                  disabled={isConnecting}
+                  className="w-full"
+                >
+                  {isConnecting ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Wallet className="h-4 w-4 mr-2" />
+                  )}
+                  {detection.hasMetaMask ? "Connect MetaMask" : "Install MetaMask"}
+                </Button>
+                
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => connectWallet("coinbase")}
+                  disabled={isConnecting}
+                  className="w-full"
+                >
+                  {isConnecting ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Wallet className="h-4 w-4 mr-2" />
+                  )}
+                  {detection.hasCoinbaseWallet ? "Connect Coinbase Wallet" : "Install Coinbase Wallet"}
+                </Button>
+              </div>
+            )}
             <p className="text-sm text-muted-foreground text-center">
               Connect your wallet to start trading on Hyperliquid
             </p>
@@ -316,10 +182,10 @@ export function WalletConnection({
                   </p>
                   <div className="flex gap-2 mt-1">
                     <Badge variant="outline" className="text-xs">
-                      {getProviderName(walletState.provider)}
+                      {providerName}
                     </Badge>
                     <Badge variant="outline" className="text-xs">
-                      {getChainName(walletState.chainId)}
+                      {chainName}
                     </Badge>
                   </div>
                 </div>
@@ -344,7 +210,7 @@ export function WalletConnection({
               </div>
             </div>
 
-            {walletState.chainId && walletState.chainId !== 42161 && (
+            {isWrongNetwork && (
               <Alert>
                 <AlertTriangle className="h-4 w-4" />
                 <AlertDescription>
@@ -382,7 +248,10 @@ export function WalletConnection({
       </CardContent>
     </Card>
   );
-}
+};
+
+// Memoize the component to prevent unnecessary re-renders
+export const WalletConnection = memo(WalletConnectionComponent);
 
 // Type declarations for wallet providers
 declare global {

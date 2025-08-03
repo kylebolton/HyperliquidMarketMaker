@@ -83,19 +83,38 @@ export function MarketMaker({
     useState<NodeJS.Timeout | null>(null);
   const [coinPrices, setCoinPrices] = useState<Map<string, number>>(new Map());
 
+  // Handle errors - memoized to prevent infinite re-renders
+  const handleError = useCallback((message: string, error: unknown, type: ErrorType) => {
+    const errorMessage = (error as Error)?.message || "Unknown error";
+    const newError: ErrorMessage = {
+      id: Date.now().toString(),
+      type,
+      message: `${message}: ${errorMessage}`,
+      timestamp: new Date(),
+    };
+    setErrors(prev => [newError, ...prev]);
+
+    // Remove errors after 10 seconds if they're not critical
+    if (type !== "critical") {
+      setTimeout(() => {
+        setErrors(prev => prev.filter(e => e.id !== newError.id));
+      }, 10000);
+    }
+  }, []);
+
   // Fetch available coins from the exchange
   const fetchAvailableCoins = useCallback(async () => {
     try {
       if (!hyperliquidService) return;
       const coins = await hyperliquidService.getAvailableCoins();
       setAvailableCoins(coins);
-      if (coins.length > 0) {
+      if (coins.length > 0 && !selectedCoin) {
         setSelectedCoin(coins[0]);
       }
     } catch (error) {
       handleError("Failed to fetch available coins", error, "critical");
     }
-  }, [hyperliquidService]);
+  }, [hyperliquidService, selectedCoin, handleError]);
 
   // Fetch current market price for a coin
   const fetchMarketPrice = useCallback(
@@ -127,7 +146,7 @@ export function MarketMaker({
         handleError("Failed to fetch market price", error, "warning");
       }
     },
-    [hyperliquidService]
+    [hyperliquidService, handleError]
   );
 
   // Fetch available coins on component mount
@@ -233,27 +252,9 @@ export function MarketMaker({
     }
   };
 
-  // Handle errors
-  const handleError = (message: string, error: unknown, type: ErrorType) => {
-    const errorMessage = (error as Error)?.message || "Unknown error";
-    const newError: ErrorMessage = {
-      id: Date.now().toString(),
-      type,
-      message: `${message}: ${errorMessage}`,
-      timestamp: new Date(),
-    };
-    setErrors(prev => [newError, ...prev]);
-
-    // Remove errors after 10 seconds if they're not critical
-    if (type !== "critical") {
-      setTimeout(() => {
-        setErrors(prev => prev.filter(e => e.id !== newError.id));
-      }, 10000);
-    }
-  };
 
   // Check if an error is a legitimate problem or just a rejected order
-  const isLegitimateErrorMessage = (error: unknown): boolean => {
+  const isLegitimateErrorMessage = useCallback((error: unknown): boolean => {
     const errorMessage = (error as Error)?.message || "";
 
     // List of error messages that indicate legitimate problems
@@ -273,7 +274,7 @@ export function MarketMaker({
     return legitimateErrors.some(e =>
       errorMessage.toLowerCase().includes(e.toLowerCase())
     );
-  };
+  }, []);
 
   // Cancel an order
   const cancelOrder = async (order: Order) => {
